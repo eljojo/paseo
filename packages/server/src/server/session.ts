@@ -28,7 +28,6 @@ import {
   type SubscribeCheckoutDiffRequest,
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
-  type ProjectCheckoutLitePayload,
   type ProjectPlacementPayload,
   type WorkspaceDescriptorPayload,
   type WorkspaceStateBucket,
@@ -96,6 +95,24 @@ import type {
 import { AgentStorage, type StoredAgentRecord } from './agent/agent-storage.js'
 import { isValidAgentProvider, AGENT_PROVIDER_IDS } from './agent/provider-manifest.js'
 import {
+  buildProjectPlacementForCwd,
+  deriveProjectKind,
+  deriveProjectRootPath,
+  deriveWorkspaceDisplayName,
+  deriveWorkspaceKind,
+  normalizeWorkspaceId as normalizePersistedWorkspaceId,
+} from './workspace-registry-model.js'
+import type {
+  PersistedProjectRecord,
+  PersistedWorkspaceRecord,
+  ProjectRegistry,
+  WorkspaceRegistry,
+} from './workspace-registry.js'
+import {
+  createPersistedProjectRecord,
+  createPersistedWorkspaceRecord,
+} from './workspace-registry.js'
+import {
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
   stripVoiceModeSystemPrompt,
@@ -121,7 +138,6 @@ import { createAgentWorktree, runAsyncWorktreeBootstrap } from './worktree-boots
 import {
   getCheckoutDiff,
   getCheckoutStatus,
-  getCheckoutStatusLite,
   listBranchSuggestions,
   NotGitRepoError,
   MergeConflictError,
@@ -192,82 +208,6 @@ export function resolveCreateAgentTitles(options: {
     explicitTitle,
     provisionalTitle,
   }
-}
-
-function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
-  if (!remoteUrl) {
-    return null
-  }
-
-  const trimmed = remoteUrl.trim()
-  if (!trimmed) {
-    return null
-  }
-
-  let host: string | null = null
-  let path: string | null = null
-
-  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/)
-  if (scpLike) {
-    host = scpLike[1] ?? null
-    path = scpLike[2] ?? null
-  } else if (trimmed.includes('://')) {
-    try {
-      const parsed = new URL(trimmed)
-      host = parsed.hostname || null
-      path = parsed.pathname ? parsed.pathname.replace(/^\//, '') : null
-    } catch {
-      return null
-    }
-  }
-
-  if (!host || !path) {
-    return null
-  }
-
-  let cleanedPath = path.trim().replace(/^\/+/, '').replace(/\/+$/, '')
-  if (cleanedPath.endsWith('.git')) {
-    cleanedPath = cleanedPath.slice(0, -4)
-  }
-  if (!cleanedPath.includes('/')) {
-    return null
-  }
-
-  const cleanedHost = host.toLowerCase()
-  if (cleanedHost === 'github.com') {
-    return `remote:github.com/${cleanedPath}`
-  }
-
-  return `remote:${cleanedHost}/${cleanedPath}`
-}
-
-function deriveProjectGroupingKey(options: {
-  cwd: string
-  remoteUrl: string | null
-  isPaseoOwnedWorktree: boolean
-  mainRepoRoot: string | null
-}): string {
-  const remoteKey = deriveRemoteProjectKey(options.remoteUrl)
-  if (remoteKey) {
-    return remoteKey
-  }
-
-  const mainRepoRoot = options.mainRepoRoot?.trim()
-  if (options.isPaseoOwnedWorktree && mainRepoRoot) {
-    return mainRepoRoot
-  }
-
-  return options.cwd
-}
-
-function deriveProjectGroupingName(projectKey: string): string {
-  const githubRemotePrefix = 'remote:github.com/'
-  if (projectKey.startsWith(githubRemotePrefix)) {
-    return projectKey.slice(githubRemotePrefix.length) || projectKey
-  }
-
-  const segments = projectKey.split(/[\\/]/).filter(Boolean)
-  return segments[segments.length - 1] || projectKey
 }
 
 type ProcessingPhase = 'idle' | 'transcribing'
@@ -431,6 +371,8 @@ export type SessionOptions = {
   paseoHome: string
   agentManager: AgentManager
   agentStorage: AgentStorage
+  projectRegistry: ProjectRegistry
+  workspaceRegistry: WorkspaceRegistry
   createAgentMcpTransport: AgentMcpTransportFactory
   stt: Resolvable<SpeechToTextProvider | null>
   tts: Resolvable<TextToSpeechProvider | null>
@@ -618,6 +560,8 @@ export class Session {
   private agentTools: ToolSet | null = null
   private agentManager: AgentManager
   private readonly agentStorage: AgentStorage
+  private readonly projectRegistry: ProjectRegistry
+  private readonly workspaceRegistry: WorkspaceRegistry
   private readonly createAgentMcpTransport: AgentMcpTransportFactory
   private readonly downloadTokenStore: DownloadTokenStore
   private readonly pushTokenStore: PushTokenStore
@@ -682,6 +626,8 @@ export class Session {
       paseoHome,
       agentManager,
       agentStorage,
+      projectRegistry,
+      workspaceRegistry,
       createAgentMcpTransport,
       stt,
       tts,
@@ -701,6 +647,8 @@ export class Session {
     this.paseoHome = paseoHome
     this.agentManager = agentManager
     this.agentStorage = agentStorage
+    this.projectRegistry = projectRegistry
+    this.workspaceRegistry = workspaceRegistry
     this.createAgentMcpTransport = createAgentMcpTransport
     this.terminalManager = terminalManager
     if (this.terminalManager) {
@@ -1292,65 +1240,16 @@ export class Session {
     }
   }
 
-  private buildFallbackProjectCheckout(cwd: string): ProjectCheckoutLitePayload {
-    return {
-      cwd,
-      isGit: false,
-      currentBranch: null,
-      remoteUrl: null,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    }
-  }
-
-  private toProjectCheckoutLite(
-    cwd: string,
-    status: Awaited<ReturnType<typeof getCheckoutStatusLite>>
-  ): ProjectCheckoutLitePayload {
-    if (!status.isGit) {
-      return this.buildFallbackProjectCheckout(cwd)
-    }
-
-    if (status.isPaseoOwnedWorktree) {
-      return {
-        cwd,
-        isGit: true,
-        currentBranch: status.currentBranch,
-        remoteUrl: status.remoteUrl,
-        isPaseoOwnedWorktree: true,
-        mainRepoRoot: status.mainRepoRoot,
-      }
-    }
-
-    return {
-      cwd,
-      isGit: true,
-      currentBranch: status.currentBranch,
-      remoteUrl: status.remoteUrl,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    }
-  }
-
   private async buildProjectPlacement(cwd: string): Promise<ProjectPlacementPayload> {
-    const checkout = await getCheckoutStatusLite(cwd, { paseoHome: this.paseoHome })
-      .then((status) => this.toProjectCheckoutLite(cwd, status))
-      .catch(() => this.buildFallbackProjectCheckout(cwd))
-    const projectKey = deriveProjectGroupingKey({
+    return buildProjectPlacementForCwd({
       cwd,
-      remoteUrl: checkout.remoteUrl,
-      isPaseoOwnedWorktree: checkout.isPaseoOwnedWorktree,
-      mainRepoRoot: checkout.mainRepoRoot,
+      paseoHome: this.paseoHome,
     })
-    return {
-      projectKey,
-      projectName: deriveProjectGroupingName(projectKey),
-      checkout,
-    }
   }
 
   private async forwardAgentUpdate(agent: ManagedAgent): Promise<void> {
     try {
+      await this.ensureWorkspaceRegistered(agent.cwd)
       const subscription = this.agentUpdatesSubscription
       const payload = await this.buildAgentPayload(agent)
       if (subscription) {
@@ -1570,6 +1469,14 @@ export class Session {
 
         case 'paseo_worktree_archive_request':
           await this.handlePaseoWorktreeArchiveRequest(msg)
+          break
+
+        case 'open_project_request':
+          await this.handleOpenProjectRequest(msg)
+          break
+
+        case 'archive_workspace_request':
+          await this.handleArchiveWorkspaceRequest(msg)
           break
 
         case 'file_explorer_request':
@@ -1874,7 +1781,7 @@ export class Session {
   private async handleArchiveAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`)
 
-    const { archivedAt, archivedRecord } = await this.archiveAgentState(agentId)
+    const { archivedAt } = await this.archiveAgentState(agentId)
 
     this.emit({
       type: 'agent_archived',
@@ -1883,12 +1790,6 @@ export class Session {
         archivedAt,
         requestId,
       },
-    })
-
-    await this.maybeArchiveWorktreeAfterLastAgentArchived({
-      archivedAgentId: agentId,
-      archivedAgentCwd: archivedRecord.cwd,
-      requestId,
     })
   }
 
@@ -2626,6 +2527,7 @@ export class Session {
         worktreeName,
         labels
       )
+      await this.ensureWorkspaceRegistered(sessionConfig.cwd)
       const snapshot = await this.agentManager.createAgent(sessionConfig, undefined, { labels })
       await this.forwardAgentUpdate(snapshot)
 
@@ -4570,74 +4472,6 @@ export class Session {
     }
   }
 
-  private async maybeArchiveWorktreeAfterLastAgentArchived(options: {
-    archivedAgentId: string
-    archivedAgentCwd: string
-    requestId: string
-  }): Promise<void> {
-    try {
-      const ownership = await isPaseoOwnedWorktreeCwd(options.archivedAgentCwd, {
-        paseoHome: this.paseoHome,
-      })
-      if (!ownership.allowed) {
-        return
-      }
-
-      const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(options.archivedAgentCwd, {
-        paseoHome: this.paseoHome,
-      })
-      if (!resolvedWorktree) {
-        return
-      }
-
-      const records = await this.agentStorage.list()
-      const recordsById = new Map(records.map((record) => [record.id, record]))
-      const targetPath = resolvedWorktree.worktreePath
-      const hasRemainingNonArchivedRecord = records.some((record) => {
-        if (record.id === options.archivedAgentId || record.archivedAt) {
-          return false
-        }
-        return this.isPathWithinRoot(targetPath, record.cwd)
-      })
-      if (hasRemainingNonArchivedRecord) {
-        return
-      }
-
-      const hasUnknownLiveAgent = this.agentManager.listAgents().some((agent) => {
-        if (agent.id === options.archivedAgentId) {
-          return false
-        }
-        if (!this.isPathWithinRoot(targetPath, agent.cwd)) {
-          return false
-        }
-        return !recordsById.has(agent.id)
-      })
-      if (hasUnknownLiveAgent) {
-        return
-      }
-
-      const repoRoot = ownership.repoRoot
-      if (!repoRoot) {
-        this.sessionLogger.warn(
-          { agentId: options.archivedAgentId, worktreePath: targetPath },
-          'Unable to resolve repo root for auto-archive after agent archive'
-        )
-        return
-      }
-
-      await this.archivePaseoWorktree({
-        targetPath,
-        repoRoot,
-        requestId: options.requestId,
-      })
-    } catch (error: any) {
-      this.sessionLogger.warn(
-        { err: error, agentId: options.archivedAgentId, cwd: options.archivedAgentCwd },
-        'Failed to auto-archive worktree after agent archive'
-      )
-    }
-  }
-
   private async archivePaseoWorktree(options: {
     targetPath: string
     repoRoot: string
@@ -4653,11 +4487,13 @@ export class Session {
 
     const removedAgents = new Set<string>()
     const affectedWorkspaceCwds = new Set<string>([targetPath])
+    const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)])
     const agents = this.agentManager.listAgents()
     for (const agent of agents) {
       if (this.isPathWithinRoot(targetPath, agent.cwd)) {
         removedAgents.add(agent.id)
         affectedWorkspaceCwds.add(agent.cwd)
+        affectedWorkspaceIds.add(normalizePersistedWorkspaceId(agent.cwd))
         try {
           await this.agentManager.closeAgent(agent.id)
         } catch {
@@ -4676,6 +4512,7 @@ export class Session {
       if (this.isPathWithinRoot(targetPath, record.cwd)) {
         removedAgents.add(record.id)
         affectedWorkspaceCwds.add(record.cwd)
+        affectedWorkspaceIds.add(normalizePersistedWorkspaceId(record.cwd))
         try {
           await this.agentStorage.remove(record.id)
         } catch {
@@ -4691,6 +4528,10 @@ export class Session {
       worktreePath: targetPath,
       paseoHome: this.paseoHome,
     })
+
+    for (const workspaceId of affectedWorkspaceIds) {
+      await this.archiveWorkspaceRecord(workspaceId)
+    }
 
     for (const agentId of removedAgents) {
       this.emit({
@@ -5364,14 +5205,6 @@ export class Session {
     done: 4,
   }
 
-  private normalizeWorkspaceId(cwd: string): string {
-    const trimmed = cwd.trim()
-    if (!trimmed) {
-      return cwd
-    }
-    return resolve(trimmed)
-  }
-
   private deriveWorkspaceStateBucket(agent: AgentSnapshotPayload): WorkspaceStateBucket {
     const pendingPermissionCount = agent.pendingPermissions?.length ?? 0
     if (pendingPermissionCount > 0 || agent.attentionReason === 'permission') {
@@ -5387,23 +5220,6 @@ export class Session {
       return 'attention'
     }
     return 'done'
-  }
-
-  private deriveWorkspaceDirectoryName(cwd: string): string {
-    const normalized = cwd.replace(/\\/g, '/')
-    const segments = normalized.split('/').filter(Boolean)
-    return segments[segments.length - 1] ?? cwd
-  }
-
-  private deriveWorkspaceName(input: {
-    cwd: string
-    checkout: ProjectCheckoutLitePayload
-  }): string {
-    const branch = input.checkout.currentBranch?.trim() ?? null
-    if (branch && branch.toUpperCase() !== 'HEAD') {
-      return branch
-    }
-    return this.deriveWorkspaceDirectoryName(input.cwd)
   }
 
   private accumulateLatestActivityAt(
@@ -5425,20 +5241,55 @@ export class Session {
     return current
   }
 
-  private async listWorkspaceDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
-    const agents = await this.listAgentPayloads()
+  private async describeWorkspaceRecord(
+    workspace: PersistedWorkspaceRecord,
+    projectRecord?: PersistedProjectRecord | null
+  ): Promise<WorkspaceDescriptorPayload> {
+    const resolvedProjectRecord = projectRecord ?? (await this.projectRegistry.get(workspace.projectId))
+    let displayName = workspace.displayName
+    try {
+      const placement = await this.buildProjectPlacement(workspace.cwd)
+      displayName = deriveWorkspaceDisplayName({
+        cwd: workspace.cwd,
+        checkout: placement.checkout,
+      })
+    } catch {
+      // Fall back to the persisted label if checkout metadata is unavailable.
+    }
 
+    return {
+      id: workspace.workspaceId,
+      projectId: workspace.projectId,
+      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
+      projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
+      projectKind: resolvedProjectRecord?.kind ?? 'non_git',
+      workspaceKind: workspace.kind,
+      name: displayName,
+      status: 'done',
+      activityAt: null,
+    }
+  }
+
+  private async listWorkspaceDescriptors(): Promise<WorkspaceDescriptorPayload[]> {
+    const [agents, persistedWorkspaces, persistedProjects] = await Promise.all([
+      this.listAgentPayloads(),
+      this.workspaceRegistry.list(),
+      this.projectRegistry.list(),
+    ])
+
+    const activeRecords = persistedWorkspaces.filter((workspace) => !workspace.archivedAt)
+    const activeProjects = new Map(
+      persistedProjects
+        .filter((project) => !project.archivedAt)
+        .map((project) => [project.projectId, project] as const)
+    )
     const descriptorsByWorkspaceId = new Map<string, WorkspaceDescriptorPayload>()
-    const placementByWorkspaceId = new Map<string, Promise<ProjectPlacementPayload>>()
-    const getPlacement = (workspaceCwd: string): Promise<ProjectPlacementPayload> => {
-      const key = this.normalizeWorkspaceId(workspaceCwd)
-      const existing = placementByWorkspaceId.get(key)
-      if (existing) {
-        return existing
-      }
-      const next = this.buildProjectPlacement(workspaceCwd)
-      placementByWorkspaceId.set(key, next)
-      return next
+
+    for (const workspace of activeRecords) {
+      descriptorsByWorkspaceId.set(
+        workspace.workspaceId,
+        await this.describeWorkspaceRecord(workspace, activeProjects.get(workspace.projectId) ?? null)
+      )
     }
 
     for (const agent of agents) {
@@ -5446,21 +5297,9 @@ export class Session {
         continue
       }
 
-      const workspaceId = this.normalizeWorkspaceId(agent.cwd)
-      const placement = await getPlacement(workspaceId)
+      const workspaceId = normalizePersistedWorkspaceId(agent.cwd)
       const existing = descriptorsByWorkspaceId.get(workspaceId)
       if (!existing) {
-        const bucket = this.deriveWorkspaceStateBucket(agent)
-        descriptorsByWorkspaceId.set(workspaceId, {
-          id: workspaceId,
-          projectId: placement.projectKey,
-          name: this.deriveWorkspaceName({
-            cwd: workspaceId,
-            checkout: placement.checkout,
-          }),
-          status: bucket,
-          activityAt: this.accumulateLatestActivityAt(null, agent),
-        })
         continue
       }
 
@@ -5751,13 +5590,71 @@ export class Session {
     }
   }
 
+  private async ensureWorkspaceRegistered(cwd: string): Promise<PersistedWorkspaceRecord> {
+    const workspaceId = normalizePersistedWorkspaceId(cwd)
+    const existing = await this.workspaceRegistry.get(workspaceId)
+    if (existing && !existing.archivedAt) {
+      return existing
+    }
+
+    const placement = await this.buildProjectPlacement(workspaceId)
+    const now = new Date().toISOString()
+    const projectExisting = await this.projectRegistry.get(placement.projectKey)
+    const projectRecord: PersistedProjectRecord = createPersistedProjectRecord({
+      projectId: placement.projectKey,
+      rootPath: deriveProjectRootPath({
+        cwd: workspaceId,
+        checkout: placement.checkout,
+      }),
+      kind: deriveProjectKind(placement.checkout),
+      displayName: placement.projectName,
+      createdAt: projectExisting?.createdAt ?? now,
+      updatedAt: now,
+      archivedAt: null,
+    })
+    await this.projectRegistry.upsert(projectRecord)
+
+    const workspaceRecord = createPersistedWorkspaceRecord({
+      workspaceId,
+      projectId: placement.projectKey,
+      cwd: workspaceId,
+      kind: deriveWorkspaceKind(placement.checkout),
+      displayName: deriveWorkspaceDisplayName({
+        cwd: workspaceId,
+        checkout: placement.checkout,
+      }),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      archivedAt: null,
+    })
+    await this.workspaceRegistry.upsert(workspaceRecord)
+    return workspaceRecord
+  }
+
+  private async archiveWorkspaceRecord(workspaceId: string, archivedAt?: string): Promise<void> {
+    const existing = await this.workspaceRegistry.get(workspaceId)
+    if (!existing || existing.archivedAt) {
+      return
+    }
+
+    const nextArchivedAt = archivedAt ?? new Date().toISOString()
+    await this.workspaceRegistry.archive(workspaceId, nextArchivedAt)
+
+    const siblingWorkspaces = (await this.workspaceRegistry.list()).filter(
+      (workspace) => workspace.projectId === existing.projectId && !workspace.archivedAt
+    )
+    if (siblingWorkspaces.length === 0) {
+      await this.projectRegistry.archive(existing.projectId, nextArchivedAt)
+    }
+  }
+
   private async emitWorkspaceUpdateForCwd(cwd: string): Promise<void> {
     const subscription = this.workspaceUpdatesSubscription
     if (!subscription) {
       return
     }
 
-    const workspaceId = this.normalizeWorkspaceId(cwd)
+    const workspaceId = normalizePersistedWorkspaceId(cwd)
     const all = await this.listWorkspaceDescriptors()
     const workspace = all.find((entry) => entry.id === workspaceId)
     if (!workspace) {
@@ -5789,7 +5686,7 @@ export class Session {
 
     const uniqueWorkspaceCwds = new Set<string>()
     for (const cwd of cwds) {
-      const normalized = this.normalizeWorkspaceId(cwd)
+      const normalized = normalizePersistedWorkspaceId(cwd)
       if (!normalized) {
         continue
       }
@@ -5918,6 +5815,76 @@ export class Session {
           requestType: request.type,
           error: message,
           code,
+        },
+      })
+    }
+  }
+
+  private async handleOpenProjectRequest(
+    request: Extract<SessionInboundMessage, { type: 'open_project_request' }>
+  ): Promise<void> {
+    try {
+      const workspace = await this.ensureWorkspaceRegistered(request.cwd)
+      await this.emitWorkspaceUpdateForCwd(workspace.cwd)
+      const descriptor = await this.describeWorkspaceRecord(workspace)
+      this.emit({
+        type: 'open_project_response',
+        payload: {
+          requestId: request.requestId,
+          workspace: descriptor,
+          error: null,
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to open project'
+      this.sessionLogger.error({ err: error, cwd: request.cwd }, 'Failed to open project')
+      this.emit({
+        type: 'open_project_response',
+        payload: {
+          requestId: request.requestId,
+          workspace: null,
+          error: message,
+        },
+      })
+    }
+  }
+
+  private async handleArchiveWorkspaceRequest(
+    request: Extract<SessionInboundMessage, { type: 'archive_workspace_request' }>
+  ): Promise<void> {
+    try {
+      const existing = await this.workspaceRegistry.get(request.workspaceId)
+      if (!existing) {
+        throw new Error(`Workspace not found: ${request.workspaceId}`)
+      }
+      if (existing.kind === 'worktree') {
+        throw new Error('Use worktree archive for Paseo worktrees')
+      }
+      const archivedAt = new Date().toISOString()
+      await this.archiveWorkspaceRecord(request.workspaceId, archivedAt)
+      await this.emitWorkspaceUpdateForCwd(existing.cwd)
+      this.emit({
+        type: 'archive_workspace_response',
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          archivedAt,
+          error: null,
+        },
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to archive workspace'
+      this.sessionLogger.error(
+        { err: error, workspaceId: request.workspaceId },
+        'Failed to archive workspace'
+      )
+      this.emit({
+        type: 'archive_workspace_response',
+        payload: {
+          requestId: request.requestId,
+          workspaceId: request.workspaceId,
+          archivedAt: null,
+          error: message,
         },
       })
     }

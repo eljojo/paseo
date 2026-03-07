@@ -34,8 +34,9 @@ import {
 import {
   useSessionStore,
   type Agent,
-  type WorkspaceDescriptor,
   type SessionState,
+  type WorkspaceDescriptor,
+  normalizeWorkspaceDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
@@ -52,7 +53,6 @@ import {
   normalizeAgentSnapshot,
 } from "@/utils/agent-snapshots";
 import { resolveProjectPlacement } from "@/utils/project-placement";
-import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
 
@@ -129,24 +129,6 @@ type WorkspaceUpdatePayload = Extract<
 
 const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
   update.kind === "remove" ? update.agentId : update.agent.id;
-
-function normalizeWorkspaceDescriptor(
-  payload: Extract<WorkspaceUpdatePayload, { kind: "upsert" }>["workspace"]
-): WorkspaceDescriptor {
-  const activityAt = payload.activityAt
-    ? new Date(payload.activityAt)
-    : null;
-  return {
-    id: normalizeWorkspaceIdentity(payload.id) ?? payload.id,
-    projectId: payload.projectId,
-    name: payload.name,
-    status: payload.status,
-    activityAt:
-      activityAt && !Number.isNaN(activityAt.getTime())
-        ? activityAt
-        : null,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Module-level pending agent updates buffer (scoped by serverId)

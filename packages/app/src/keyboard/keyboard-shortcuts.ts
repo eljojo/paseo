@@ -133,7 +133,7 @@ const SHORTCUT_BINDINGS: readonly KeyboardShortcutBinding[] = [
     help: {
       id: "new-agent",
       section: "global",
-      label: "Create new agent",
+      label: "Open project",
       keys: ["mod", "shift", "O"],
     },
   },

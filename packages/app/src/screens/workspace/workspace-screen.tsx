@@ -116,6 +116,21 @@ function decodeSegment(value: string): string {
   }
 }
 
+function buildOpenIntentKey(input: {
+  serverId: string;
+  workspaceId: string;
+  openIntent?: WorkspaceOpenIntent | null;
+}): string | null {
+  if (!input.openIntent) {
+    return null;
+  }
+  const openParam = buildWorkspaceOpenIntentParam(input.openIntent);
+  if (!openParam) {
+    return null;
+  }
+  return `${input.serverId}:${input.workspaceId}:${openParam}`;
+}
+
 export function WorkspaceScreen({
   serverId,
   workspaceId,
@@ -432,18 +447,43 @@ function WorkspaceScreenContent({
     (state) => state.clearWorkspaceTabActionRequest
   );
   const consumedOpenIntentsRef = useRef(new Set<string>());
+  const [resolvedOpenIntentKey, setResolvedOpenIntentKey] = useState<string | null>(null);
+  const currentOpenIntentKey = useMemo(
+    () =>
+      buildOpenIntentKey({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+        openIntent,
+      }),
+    [normalizedServerId, normalizedWorkspaceId, openIntent]
+  );
+
+  useEffect(() => {
+    if (!currentOpenIntentKey) {
+      if (resolvedOpenIntentKey !== null) {
+        setResolvedOpenIntentKey(null);
+      }
+      return;
+    }
+
+    if (resolvedOpenIntentKey === currentOpenIntentKey) {
+      return;
+    }
+  }, [currentOpenIntentKey, resolvedOpenIntentKey]);
 
   useEffect(() => {
     if (!openIntent || !persistenceKey) {
       return;
     }
 
-    const openParam = buildWorkspaceOpenIntentParam(openIntent);
-    if (!openParam) {
+    if (!currentOpenIntentKey) {
       return;
     }
-    const intentKey = `${normalizedServerId}:${normalizedWorkspaceId}:${openParam}`;
+    const intentKey = currentOpenIntentKey;
     if (consumedOpenIntentsRef.current.has(intentKey)) {
+      if (resolvedOpenIntentKey !== intentKey) {
+        setResolvedOpenIntentKey(intentKey);
+      }
       return;
     }
     consumedOpenIntentsRef.current.add(intentKey);
@@ -468,6 +508,7 @@ function WorkspaceScreenContent({
           workspaceId: normalizedWorkspaceId,
           tabId,
         });
+        setResolvedOpenIntentKey(intentKey);
       }
       return;
     }
@@ -488,8 +529,10 @@ function WorkspaceScreenContent({
         workspaceId: normalizedWorkspaceId,
         tabId,
       });
+      setResolvedOpenIntentKey(intentKey);
     }
   }, [
+    currentOpenIntentKey,
     focusTab,
     openDraftTab,
     openIntent,
@@ -497,7 +540,12 @@ function WorkspaceScreenContent({
     persistenceKey,
     normalizedServerId,
     normalizedWorkspaceId,
+    resolvedOpenIntentKey,
   ]);
+
+  const unresolvedOpenIntent = currentOpenIntentKey && resolvedOpenIntentKey !== currentOpenIntentKey
+    ? openIntent
+    : null;
 
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId) {
@@ -586,17 +634,17 @@ function WorkspaceScreenContent({
         tabOrder,
         focusedTabId,
         preferredTarget:
-          openIntent?.kind === "agent"
-            ? { kind: "agent", agentId: openIntent.agentId }
-            : openIntent?.kind === "terminal"
-              ? { kind: "terminal", terminalId: openIntent.terminalId }
-              : openIntent?.kind === "draft"
-                ? { kind: "draft", draftId: openIntent.draftId }
-                : openIntent?.kind === "file"
-                  ? { kind: "file", path: openIntent.path }
+          unresolvedOpenIntent?.kind === "agent"
+            ? { kind: "agent", agentId: unresolvedOpenIntent.agentId }
+            : unresolvedOpenIntent?.kind === "terminal"
+              ? { kind: "terminal", terminalId: unresolvedOpenIntent.terminalId }
+              : unresolvedOpenIntent?.kind === "draft"
+                ? { kind: "draft", draftId: unresolvedOpenIntent.draftId }
+                : unresolvedOpenIntent?.kind === "file"
+                  ? { kind: "file", path: unresolvedOpenIntent.path }
                   : null,
       }),
-    [focusedTabId, openIntent, tabOrder, terminals, uiTabs, workspaceAgents]
+    [focusedTabId, tabOrder, terminals, uiTabs, unresolvedOpenIntent, workspaceAgents]
   );
   const activeTabId = tabModel.activeTabId;
 

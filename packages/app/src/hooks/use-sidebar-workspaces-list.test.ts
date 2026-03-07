@@ -14,6 +14,28 @@ function item(key: string): OrderedItem {
   return { key }
 }
 
+function workspace(
+  input: Pick<WorkspaceDescriptor, "id" | "projectId" | "name" | "status" | "activityAt"> &
+    Partial<
+      Pick<
+        WorkspaceDescriptor,
+        "projectDisplayName" | "projectRootPath" | "projectKind" | "workspaceKind"
+      >
+    >
+): WorkspaceDescriptor {
+  return {
+    id: input.id,
+    projectId: input.projectId,
+    projectDisplayName: input.projectDisplayName ?? input.projectId,
+    projectRootPath: input.projectRootPath ?? input.id,
+    projectKind: input.projectKind ?? "git",
+    workspaceKind: input.workspaceKind ?? "local_checkout",
+    name: input.name,
+    status: input.status,
+    activityAt: input.activityAt,
+  }
+}
+
 describe('applyStoredOrdering', () => {
   it('keeps unknown items on the baseline while applying stored order', () => {
     const result = applyStoredOrdering({
@@ -72,13 +94,13 @@ describe('appendMissingOrderKeys', () => {
 describe('buildSidebarProjectsFromWorkspaces', () => {
   it('uses workspace descriptor name and status directly', () => {
     const workspaces: WorkspaceDescriptor[] = [
-      {
+      workspace({
         id: '/repo/main',
         projectId: 'project-1',
         name: 'feat/hard-cut',
         status: 'failed',
         activityAt: new Date('2026-01-01T00:00:00.000Z'),
-      },
+      }),
     ]
 
     const projects = buildSidebarProjectsFromWorkspaces({
@@ -96,20 +118,20 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
 
   it('preserves stored project order even when activity changes', () => {
     const initialWorkspaces: WorkspaceDescriptor[] = [
-      {
+      workspace({
         id: '/repo/b',
         projectId: 'project-b',
         name: 'feat/b',
         status: 'running',
         activityAt: new Date('2026-01-02T00:00:00.000Z'),
-      },
-      {
+      }),
+      workspace({
         id: '/repo/a',
         projectId: 'project-a',
         name: 'feat/a',
         status: 'running',
         activityAt: new Date('2026-01-01T00:00:00.000Z'),
-      },
+      }),
     ]
 
     const seededOrder = appendMissingOrderKeys({
@@ -125,20 +147,20 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
     const updatedProjects = buildSidebarProjectsFromWorkspaces({
       serverId: 'srv',
       workspaces: [
-        {
+        workspace({
           id: '/repo/b',
           projectId: 'project-b',
           name: 'feat/b',
           status: 'running',
           activityAt: new Date('2026-01-02T00:00:00.000Z'),
-        },
-        {
+        }),
+        workspace({
           id: '/repo/a',
           projectId: 'project-a',
           name: 'feat/a',
           status: 'running',
           activityAt: new Date('2026-01-03T00:00:00.000Z'),
-        },
+        }),
       ],
       projectOrder: seededOrder,
       workspaceOrderByScope: {},
@@ -151,27 +173,27 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
     const projects = buildSidebarProjectsFromWorkspaces({
       serverId: 'srv',
       workspaces: [
-        {
+        workspace({
           id: '/repo/c',
           projectId: 'project-c',
           name: 'feat/c',
           status: 'running',
           activityAt: new Date('2026-01-04T00:00:00.000Z'),
-        },
-        {
+        }),
+        workspace({
           id: '/repo/b',
           projectId: 'project-b',
           name: 'feat/b',
           status: 'running',
           activityAt: new Date('2026-01-02T00:00:00.000Z'),
-        },
-        {
+        }),
+        workspace({
           id: '/repo/a',
           projectId: 'project-a',
           name: 'feat/a',
           status: 'running',
           activityAt: new Date('2026-01-01T00:00:00.000Z'),
-        },
+        }),
       ],
       projectOrder: ['project-b', 'project-a', 'project-c'],
       workspaceOrderByScope: {},
@@ -184,20 +206,20 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
     const initialProjects = buildSidebarProjectsFromWorkspaces({
       serverId: 'srv',
       workspaces: [
-        {
+        workspace({
           id: '/repo/main',
           projectId: 'project-1',
           name: 'main',
           status: 'running',
           activityAt: new Date('2026-01-02T00:00:00.000Z'),
-        },
-        {
+        }),
+        workspace({
           id: '/repo/feature',
           projectId: 'project-1',
           name: 'feature',
           status: 'running',
           activityAt: new Date('2026-01-01T00:00:00.000Z'),
-        },
+        }),
       ],
       projectOrder: ['project-1'],
       workspaceOrderByScope: {},
@@ -211,20 +233,20 @@ describe('buildSidebarProjectsFromWorkspaces', () => {
     const projects = buildSidebarProjectsFromWorkspaces({
       serverId: 'srv',
       workspaces: [
-        {
+        workspace({
           id: '/repo/main',
           projectId: 'project-1',
           name: 'main',
           status: 'running',
           activityAt: new Date('2026-01-02T00:00:00.000Z'),
-        },
-        {
+        }),
+        workspace({
           id: '/repo/feature',
           projectId: 'project-1',
           name: 'feature',
           status: 'running',
           activityAt: new Date('2026-01-03T00:00:00.000Z'),
-        },
+        }),
       ],
       projectOrder: ['project-1'],
       workspaceOrderByScope: {

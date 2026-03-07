@@ -196,4 +196,42 @@ describe("terminal-emulator-runtime", () => {
     expect(terminal.options?.theme).toEqual({ background: "after" });
     expect(refresh).toHaveBeenCalledWith(0, 11);
   });
+
+  it("forces a refit when the page becomes visible again", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const fitAndEmitResize = vi.fn();
+
+    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
+      fitAndEmitResize;
+    (globalThis as { document?: { visibilityState?: string } }).document = {
+      visibilityState: "visible",
+    };
+
+    (
+      runtime as unknown as {
+        handleVisibilityRestore: () => void;
+      }
+    ).handleVisibilityRestore();
+
+    expect(fitAndEmitResize).toHaveBeenCalledWith(true);
+  });
+
+  it("does not refit while the page is still hidden", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const fitAndEmitResize = vi.fn();
+
+    (runtime as unknown as { fitAndEmitResize: (force: boolean) => void }).fitAndEmitResize =
+      fitAndEmitResize;
+    (globalThis as { document?: { visibilityState?: string } }).document = {
+      visibilityState: "hidden",
+    };
+
+    (
+      runtime as unknown as {
+        handleVisibilityRestore: () => void;
+      }
+    ).handleVisibilityRestore();
+
+    expect(fitAndEmitResize).not.toHaveBeenCalled();
+  });
 });

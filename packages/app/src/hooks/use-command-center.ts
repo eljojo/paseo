@@ -9,7 +9,7 @@ import {
   takeCommandCenterFocusRestoreElement,
 } from "@/utils/command-center-focus-restore";
 import {
-  buildHostNewAgentRoute,
+  buildHostOpenProjectRoute,
   buildHostWorkspaceAgentRoute,
   buildHostSettingsRoute,
   parseHostAgentRouteFromPathname,
@@ -55,10 +55,10 @@ type CommandCenterActionDefinition = {
 const COMMAND_CENTER_ACTIONS: readonly CommandCenterActionDefinition[] = [
   {
     id: "new-agent",
-    title: "New agent",
+    title: "Open project",
     icon: "plus",
     shortcutKeys: ["mod", "shift", "O"],
-    keywords: ["new", "new agent", "create", "start", "launch", "agent"],
+    keywords: ["open", "project", "folder", "workspace", "repo"],
     buildRoute: ({ newAgentRoute }) => newAgentRoute,
   },
   {
@@ -123,7 +123,7 @@ export function useCommandCenter() {
   const newAgentRoute = useMemo<Href>(() => {
     const serverIdFromPath =
       parseServerIdFromPathname(pathname) ?? fallbackServerId;
-    return serverIdFromPath ? (buildHostNewAgentRoute(serverIdFromPath) as Href) : "/";
+    return serverIdFromPath ? (buildHostOpenProjectRoute(serverIdFromPath) as Href) : "/";
   }, [fallbackServerId, pathname]);
 
   const settingsRoute = useMemo<Href>(() => {

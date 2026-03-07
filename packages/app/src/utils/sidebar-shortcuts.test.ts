@@ -8,6 +8,7 @@ function workspace(serverId: string, cwd: string): SidebarWorkspaceEntry {
     workspaceKey: `${serverId}:${cwd}`,
     serverId,
     workspaceId: cwd,
+    workspaceKind: "local_checkout",
     name: cwd,
     activityAt: null,
     statusBucket: "done",
@@ -18,6 +19,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
   return {
     projectKey,
     projectName: projectKey,
+    projectKind: "git",
     iconWorkingDir: workspaces[0]?.workspaceId ?? "",
     statusBucket: "done",
     activeCount: 0,

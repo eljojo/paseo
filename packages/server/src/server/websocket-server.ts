@@ -8,6 +8,7 @@ import type { AgentStorage } from "./agent/agent-storage.js";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
+import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
 import {
   type ServerInfoStatusPayload,
   type WSHelloMessage,
@@ -69,6 +70,30 @@ type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
   allowedHosts?: AllowedHostsConfig;
 };
+
+function createNoopProjectRegistry(): ProjectRegistry {
+  return {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [],
+    get: async () => null,
+    upsert: async () => {},
+    archive: async () => {},
+    remove: async () => {},
+  };
+}
+
+function createNoopWorkspaceRegistry(): WorkspaceRegistry {
+  return {
+    initialize: async () => {},
+    existsOnDisk: async () => true,
+    list: async () => [],
+    get: async () => null,
+    upsert: async () => {},
+    archive: async () => {},
+    remove: async () => {},
+  };
+}
 
 function toServerCapabilityState(
   params: {
@@ -212,6 +237,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonVersion: string;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
+  private readonly projectRegistry: ProjectRegistry;
+  private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly pushTokenStore: PushTokenStore;
@@ -295,7 +322,9 @@ export class VoiceAssistantWebSocketServer {
     },
     agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap,
     daemonVersion?: string,
-    onLifecycleIntent?: (intent: SessionLifecycleIntent) => void
+    onLifecycleIntent?: (intent: SessionLifecycleIntent) => void,
+    projectRegistry?: ProjectRegistry,
+    workspaceRegistry?: WorkspaceRegistry
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -305,6 +334,8 @@ export class VoiceAssistantWebSocketServer {
     this.daemonVersion = daemonVersion.trim();
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
+    this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.createAgentMcpTransport = createAgentMcpTransport;
@@ -597,6 +628,8 @@ export class VoiceAssistantWebSocketServer {
       paseoHome: this.paseoHome,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      projectRegistry: this.projectRegistry,
+      workspaceRegistry: this.workspaceRegistry,
       createAgentMcpTransport: this.createAgentMcpTransport,
       stt: this.stt,
       tts: this.tts,

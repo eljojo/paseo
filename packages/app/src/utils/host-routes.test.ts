@@ -68,6 +68,12 @@ describe("workspace route parsing", () => {
 
   it("builds host new-agent routes", () => {
     expect(buildHostNewAgentRoute("local")).toBe("/h/local/new-agent");
+    expect(
+      buildHostNewAgentRoute("local", {
+        workingDir: "/tmp/repo",
+        worktreeMode: "create",
+      })
+    ).toBe("/h/local/new-agent?workingDir=%2Ftmp%2Frepo&worktreeMode=create");
   });
 
   it("builds workspace routes with open intent query", () => {

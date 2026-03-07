@@ -23,7 +23,7 @@ import {
 import { router, usePathname } from 'expo-router'
 import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyles'
 import { type GestureType } from 'react-native-gesture-handler'
-import { ChevronDown, ChevronRight } from 'lucide-react-native'
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react-native'
 import { NestableScrollContainer } from 'react-native-draggable-flatlist'
 import { DraggableList, type DraggableRenderItemInfo } from './draggable-list'
 import type { DraggableListDragHandleProps } from './draggable-list.types'
@@ -31,6 +31,7 @@ import { getHostRuntimeStore, isHostRuntimeConnected } from '@/runtime/host-runt
 import { getIsTauri } from '@/constants/layout'
 import { projectIconQueryKey } from '@/hooks/use-project-icon-query'
 import {
+  buildHostNewAgentRoute,
   buildHostWorkspaceRoute,
   parseHostWorkspaceRouteFromPathname,
 } from '@/utils/host-routes'
@@ -58,8 +59,12 @@ import { decideLongPressMove } from '@/utils/sidebar-gesture-arbitration'
 import { confirmDialog } from '@/utils/confirm-dialog'
 import { projectIconPlaceholderLabelFromDisplayName } from '@/utils/project-display-name'
 import { shouldRenderSyncedStatusLoader } from '@/utils/status-loader'
-
-const PASEO_WORKTREE_PATH_MARKER = '/.paseo/worktrees'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { buildSidebarProjectRowModel } from '@/utils/sidebar-project-row-model'
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -84,10 +89,15 @@ interface ProjectHeaderRowProps {
   project: SidebarProjectEntry
   displayName: string
   iconDataUri: string | null
-  collapsed: boolean
-  onToggle: () => void
+  workspace: SidebarWorkspaceEntry | null
+  selected?: boolean
+  chevron: 'expand' | 'collapse' | 'disclosure'
+  onPress: () => void
+  onCreateWorktree?: () => void
   drag: () => void
   isDragging: boolean
+  isArchiving?: boolean
+  menuController: ReturnType<typeof useContextMenu> | null
   dragHandleProps?: DraggableListDragHandleProps
 }
 
@@ -127,16 +137,6 @@ function resolveStatusDotColor(input: {
           : theme.colors.border
 }
 
-function isPaseoOwnedWorktreePath(path: string): boolean {
-  const normalizedPath = path.replace(/\\/g, '/')
-  const markerIndex = normalizedPath.indexOf(PASEO_WORKTREE_PATH_MARKER)
-  if (markerIndex <= 0) {
-    return false
-  }
-  const nextChar = normalizedPath[markerIndex + PASEO_WORKTREE_PATH_MARKER.length]
-  return !nextChar || nextChar === '/'
-}
-
 function WorkspaceStatusIndicator({
   bucket,
   loading = false,
@@ -158,6 +158,82 @@ function WorkspaceStatusIndicator({
         <View style={[styles.workspaceStatusDotFill, { backgroundColor: color }]} />
       )}
     </View>
+  )
+}
+
+function ProjectLeadingVisual({
+  displayName,
+  iconDataUri,
+  workspace,
+  isArchiving = false,
+}: {
+  displayName: string
+  iconDataUri: string | null
+  workspace: SidebarWorkspaceEntry | null
+  isArchiving?: boolean
+}) {
+  const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(displayName)
+  const placeholderInitial = placeholderLabel.charAt(0).toUpperCase()
+  const activeWorkspace = workspace
+  const shouldShowWorkspaceStatus =
+    activeWorkspace !== null && (isArchiving || activeWorkspace.statusBucket !== 'done')
+
+  return (
+    <View style={styles.projectLeadingVisualSlot}>
+      {shouldShowWorkspaceStatus && activeWorkspace ? (
+        <WorkspaceStatusIndicator bucket={activeWorkspace.statusBucket} loading={isArchiving} />
+      ) : iconDataUri ? (
+        <Image source={{ uri: iconDataUri }} style={styles.projectIcon} />
+      ) : (
+        <View style={styles.projectIconFallback}>
+          <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
+        </View>
+      )}
+    </View>
+  )
+}
+
+function ProjectInlineChevron({
+  chevron,
+}: {
+  chevron: 'expand' | 'collapse' | 'disclosure'
+}) {
+  if (chevron === 'collapse') {
+    return <ChevronDown size={14} color="#9ca3af" />
+  }
+  return <ChevronRight size={14} color="#9ca3af" />
+}
+
+function NewWorktreeButton({
+  displayName,
+  onPress,
+  testID,
+}: {
+  displayName: string
+  onPress: () => void
+  testID: string
+}) {
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        style={({ hovered, pressed }) => [
+          styles.projectIconActionButton,
+          (hovered || pressed) && styles.projectIconActionButtonHovered,
+        ]}
+        onPress={(event) => {
+          event.stopPropagation()
+          onPress()
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`Create a new worktree for ${displayName}`}
+        testID={testID}
+      >
+        <Plus size={14} color="#9ca3af" />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="end" offset={8}>
+        <Text style={styles.projectActionTooltipText}>New worktree</Text>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -411,33 +487,90 @@ function ProjectHeaderRow({
   project,
   displayName,
   iconDataUri,
-  collapsed,
-  onToggle,
+  workspace,
+  selected = false,
+  chevron,
+  onPress,
+  onCreateWorktree,
   drag,
   isDragging,
+  isArchiving = false,
+  menuController,
   dragHandleProps,
 }: ProjectHeaderRowProps) {
   const interaction = useLongPressDragInteraction({
     drag,
-    menuController: null,
+    menuController,
     debugId: `project:${project.projectKey}`,
   })
-  const placeholderLabel = projectIconPlaceholderLabelFromDisplayName(displayName)
-  const placeholderInitial = placeholderLabel.charAt(0).toUpperCase()
 
   const handlePress = useCallback(() => {
     if (interaction.didLongPressRef.current) {
       interaction.didLongPressRef.current = false
       return
     }
-    onToggle()
-  }, [interaction.didLongPressRef, onToggle])
+    onPress()
+  }, [interaction.didLongPressRef, onPress])
 
-  const trigger = (
+  const rowChildren = (
+    <>
+      <View
+        {...(dragHandleProps?.attributes as any)}
+        {...(dragHandleProps?.listeners as any)}
+        ref={dragHandleProps?.setActivatorNodeRef as any}
+        style={styles.projectRowLeft}
+      >
+        <ProjectLeadingVisual
+          displayName={displayName}
+          iconDataUri={iconDataUri}
+          workspace={workspace}
+          isArchiving={isArchiving}
+        />
+
+        <Text style={styles.projectTitle} numberOfLines={1}>
+          {displayName}
+        </Text>
+
+        <ProjectInlineChevron chevron={chevron} />
+      </View>
+      {onCreateWorktree ? (
+        <NewWorktreeButton
+          displayName={displayName}
+          onPress={onCreateWorktree}
+          testID={`sidebar-project-new-worktree-${project.projectKey}`}
+        />
+      ) : null}
+    </>
+  )
+
+  if (menuController) {
+    return (
+      <ContextMenuTrigger
+        enabledOnMobile={false}
+        style={({ pressed, hovered = false }) => [
+          styles.projectRow,
+          isDragging && styles.projectRowDragging,
+          selected && styles.sidebarRowSelected,
+          hovered && styles.projectRowHovered,
+          pressed && styles.projectRowPressed,
+        ]}
+        onPressIn={interaction.handlePressIn}
+        onTouchMove={interaction.handleTouchMove}
+        onPressOut={interaction.handlePressOut}
+        onPress={handlePress}
+        testID={`sidebar-project-row-${project.projectKey}`}
+      >
+        {rowChildren}
+      </ContextMenuTrigger>
+    )
+  }
+
+  return (
     <Pressable
       style={({ pressed, hovered = false }) => [
         styles.projectRow,
         isDragging && styles.projectRowDragging,
+        selected && styles.sidebarRowSelected,
         hovered && styles.projectRowHovered,
         pressed && styles.projectRowPressed,
       ]}
@@ -447,34 +580,9 @@ function ProjectHeaderRow({
       onPress={handlePress}
       testID={`sidebar-project-row-${project.projectKey}`}
     >
-      <View
-        {...(dragHandleProps?.attributes as any)}
-        {...(dragHandleProps?.listeners as any)}
-        ref={dragHandleProps?.setActivatorNodeRef as any}
-        style={styles.projectRowLeft}
-      >
-        {iconDataUri ? (
-          <Image source={{ uri: iconDataUri }} style={styles.projectIcon} />
-        ) : (
-          <View style={styles.projectIconFallback}>
-            <Text style={styles.projectIconFallbackText}>{placeholderInitial}</Text>
-          </View>
-        )}
-
-        <Text style={styles.projectTitle} numberOfLines={1}>
-          {displayName}
-        </Text>
-
-        {collapsed ? (
-          <ChevronRight size={14} color="#9ca3af" />
-        ) : (
-          <ChevronDown size={14} color="#9ca3af" />
-        )}
-      </View>
+      {rowChildren}
     </Pressable>
   )
-
-  return trigger
 }
 
 function WorkspaceRowInner({
@@ -539,7 +647,7 @@ function WorkspaceRowInner({
       style={({ pressed, hovered = false }) => [
         styles.workspaceRow,
         isDragging && styles.workspaceRowDragging,
-        selected && styles.workspaceRowSelected,
+        selected && styles.sidebarRowSelected,
         hovered && styles.workspaceRowHovered,
         pressed && styles.workspaceRowPressed,
       ]}
@@ -557,7 +665,7 @@ function WorkspaceRowInner({
       style={({ pressed, hovered = false }) => [
         styles.workspaceRow,
         isDragging && styles.workspaceRowDragging,
-        selected && styles.workspaceRowSelected,
+        selected && styles.sidebarRowSelected,
         hovered && styles.workspaceRowHovered,
         pressed && styles.workspaceRowPressed,
       ]}
@@ -602,6 +710,7 @@ function WorkspaceRowWithMenuContent({
   const toast = useToast()
   const contextMenu = useContextMenu()
   const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree)
+  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false)
   const archiveStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({
       serverId: workspace.serverId,
@@ -609,7 +718,8 @@ function WorkspaceRowWithMenuContent({
       actionId: 'archive-worktree',
     })
   )
-  const isArchiving = archiveStatus === 'pending'
+  const isWorktree = workspace.workspaceKind === 'worktree'
+  const isArchiving = isWorktree ? archiveStatus === 'pending' : isArchivingWorkspace
 
   const handleArchiveWorktree = useCallback(() => {
     if (isArchiving) {
@@ -640,6 +750,43 @@ function WorkspaceRowWithMenuContent({
     })()
   }, [archiveWorktree, isArchiving, toast, workspace.name, workspace.serverId, workspace.workspaceId])
 
+  const handleArchiveWorkspace = useCallback(() => {
+    if (isArchivingWorkspace) {
+      return
+    }
+
+    void (async () => {
+      const confirmed = await confirmDialog({
+        title: 'Hide workspace?',
+        message: `Hide "${workspace.name}" from the sidebar?\n\nFiles on disk will not be changed.`,
+        confirmLabel: 'Hide',
+        cancelLabel: 'Cancel',
+        destructive: true,
+      })
+      if (!confirmed) {
+        return
+      }
+
+      const client = getHostRuntimeStore().getClient(workspace.serverId)
+      if (!client) {
+        toast.error('Host is not connected')
+        return
+      }
+
+      setIsArchivingWorkspace(true)
+      try {
+        const payload = await client.archiveWorkspace(workspace.workspaceId)
+        if (payload.error) {
+          throw new Error(payload.error)
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to hide workspace')
+      } finally {
+        setIsArchivingWorkspace(false)
+      }
+    })()
+  }, [isArchivingWorkspace, toast, workspace.name, workspace.serverId, workspace.workspaceId])
+
   return (
     <>
       <WorkspaceRowInner
@@ -662,12 +809,12 @@ function WorkspaceRowWithMenuContent({
       >
         <ContextMenuItem
           testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
-          status={archiveStatus}
-          pendingLabel="Archiving..."
+          status={isWorktree ? archiveStatus : isArchivingWorkspace ? 'pending' : 'idle'}
+          pendingLabel={isWorktree ? 'Archiving...' : 'Hiding...'}
           destructive
-          onSelect={handleArchiveWorktree}
+          onSelect={isWorktree ? handleArchiveWorktree : handleArchiveWorkspace}
         >
-          Archive worktree
+          {isWorktree ? 'Archive worktree' : 'Hide from sidebar'}
         </ContextMenuItem>
       </ContextMenuContent>
     </>
@@ -705,6 +852,122 @@ function WorkspaceRowWithMenu({
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
       />
+    </ContextMenu>
+  )
+}
+
+function NonGitProjectRowWithMenuContent({
+  project,
+  displayName,
+  iconDataUri,
+  workspace,
+  selected,
+  onPress,
+  drag,
+  isDragging,
+  dragHandleProps,
+}: {
+  project: SidebarProjectEntry
+  displayName: string
+  iconDataUri: string | null
+  workspace: SidebarWorkspaceEntry
+  selected: boolean
+  onPress: () => void
+  drag: () => void
+  isDragging: boolean
+  dragHandleProps?: DraggableListDragHandleProps
+}) {
+  const toast = useToast()
+  const contextMenu = useContextMenu()
+  const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false)
+
+  const handleArchiveWorkspace = useCallback(() => {
+    if (isArchivingWorkspace) {
+      return
+    }
+
+    void (async () => {
+      const confirmed = await confirmDialog({
+        title: 'Hide workspace?',
+        message: `Hide "${workspace.name}" from the sidebar?\n\nFiles on disk will not be changed.`,
+        confirmLabel: 'Hide',
+        cancelLabel: 'Cancel',
+        destructive: true,
+      })
+      if (!confirmed) {
+        return
+      }
+
+      const client = getHostRuntimeStore().getClient(workspace.serverId)
+      if (!client) {
+        toast.error('Host is not connected')
+        return
+      }
+
+      setIsArchivingWorkspace(true)
+      try {
+        const payload = await client.archiveWorkspace(workspace.workspaceId)
+        if (payload.error) {
+          throw new Error(payload.error)
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to hide workspace')
+      } finally {
+        setIsArchivingWorkspace(false)
+      }
+    })()
+  }, [isArchivingWorkspace, toast, workspace.name, workspace.serverId, workspace.workspaceId])
+
+  return (
+    <>
+      <ProjectHeaderRow
+        project={project}
+        displayName={displayName}
+        iconDataUri={iconDataUri}
+        workspace={workspace}
+        selected={selected}
+        chevron="disclosure"
+        onPress={onPress}
+        drag={drag}
+        isDragging={isDragging}
+        isArchiving={isArchivingWorkspace}
+        menuController={contextMenu}
+        dragHandleProps={dragHandleProps}
+      />
+      <ContextMenuContent
+        align="start"
+        width={220}
+        mobileMode="sheet"
+        testID={`sidebar-workspace-context-${workspace.workspaceKey}`}
+      >
+        <ContextMenuItem
+          testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
+          status={isArchivingWorkspace ? 'pending' : 'idle'}
+          pendingLabel="Hiding..."
+          destructive
+          onSelect={handleArchiveWorkspace}
+        >
+          Hide from sidebar
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </>
+  )
+}
+
+function NonGitProjectRowWithMenu(props: {
+  project: SidebarProjectEntry
+  displayName: string
+  iconDataUri: string | null
+  workspace: SidebarWorkspaceEntry
+  selected: boolean
+  onPress: () => void
+  drag: () => void
+  isDragging: boolean
+  dragHandleProps?: DraggableListDragHandleProps
+}) {
+  return (
+    <ContextMenu>
+      <NonGitProjectRowWithMenuContent {...props} />
     </ContextMenu>
   )
 }
@@ -763,21 +1026,6 @@ function WorkspaceRow({
   isDragging: boolean
   dragHandleProps?: DraggableListDragHandleProps
 }) {
-  if (!isPaseoOwnedWorktreePath(workspace.workspaceId)) {
-    return (
-      <WorkspaceRowPlain
-        workspace={workspace}
-        selected={selected}
-        shortcutNumber={shortcutNumber}
-        showShortcutBadge={showShortcutBadge}
-        onPress={onPress}
-        drag={drag}
-        isDragging={isDragging}
-        dragHandleProps={dragHandleProps}
-      />
-    )
-  }
-
   return (
     <WorkspaceRowWithMenu
       workspace={workspace}
@@ -805,6 +1053,7 @@ function ProjectBlock({
   onToggleCollapsed,
   onWorkspacePress,
   onWorkspaceReorder,
+  onCreateWorktree,
   drag,
   isDragging,
   dragHandleProps,
@@ -822,18 +1071,26 @@ function ProjectBlock({
   onToggleCollapsed: () => void
   onWorkspacePress?: () => void
   onWorkspaceReorder: (projectKey: string, workspaces: SidebarWorkspaceEntry[]) => void
+  onCreateWorktree?: (project: SidebarProjectEntry) => void
   drag: () => void
   isDragging: boolean
   dragHandleProps?: DraggableListDragHandleProps
   useNestable: boolean
 }) {
-  const renderWorkspace = useCallback(
-    ({
-      item,
-      drag: workspaceDrag,
-      isActive,
-      dragHandleProps: workspaceDragHandleProps,
-    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => {
+  const rowModel = useMemo(
+    () =>
+      buildSidebarProjectRowModel({
+        project,
+        collapsed,
+        serverId,
+        activeWorkspaceSelection,
+      }),
+    [activeWorkspaceSelection, collapsed, project, serverId]
+  )
+  const flattenedWorkspace = rowModel.flattenedWorkspace
+
+  const renderWorkspaceRow = useCallback(
+    (item: SidebarWorkspaceEntry, input?: { drag?: () => void; isDragging?: boolean; dragHandleProps?: DraggableListDragHandleProps }) => {
       const workspaceRoute = buildHostWorkspaceRoute(serverId ?? '', item.workspaceId)
       const isSelected =
         Boolean(serverId) &&
@@ -853,9 +1110,9 @@ function ProjectBlock({
             onWorkspacePress?.()
             router.replace(workspaceRoute as any)
           }}
-          drag={workspaceDrag}
-          isDragging={isActive}
-          dragHandleProps={workspaceDragHandleProps}
+          drag={input?.drag ?? (() => {})}
+          isDragging={input?.isDragging ?? false}
+          dragHandleProps={input?.dragHandleProps}
         />
       )
     },
@@ -868,33 +1125,79 @@ function ProjectBlock({
     ]
   )
 
+  const renderWorkspace = useCallback(
+    ({
+      item,
+      drag: workspaceDrag,
+      isActive,
+      dragHandleProps: workspaceDragHandleProps,
+    }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) => {
+      return renderWorkspaceRow(item, {
+        drag: workspaceDrag,
+        isDragging: isActive,
+        dragHandleProps: workspaceDragHandleProps,
+      })
+    },
+    [renderWorkspaceRow]
+  )
+
   return (
     <View style={styles.projectBlock}>
-      <ProjectHeaderRow
-        project={project}
-        displayName={displayName}
-        iconDataUri={iconDataUri}
-        collapsed={collapsed}
-        onToggle={onToggleCollapsed}
-        drag={drag}
-        isDragging={isDragging}
-        dragHandleProps={dragHandleProps}
-      />
-
-      {!collapsed ? (
-        <DraggableList
-          testID={`sidebar-workspace-list-${project.projectKey}`}
-          data={project.workspaces}
-          keyExtractor={(workspace) => workspace.workspaceKey}
-          renderItem={renderWorkspace}
-          onDragEnd={(workspaces) => onWorkspaceReorder(project.projectKey, workspaces)}
-          scrollEnabled={false}
-          useDragHandle
-          nestable={useNestable}
-          simultaneousGestureRef={parentGestureRef}
-          containerStyle={styles.workspaceListContainer}
+      {flattenedWorkspace ? (
+        <NonGitProjectRowWithMenu
+          project={project}
+          displayName={displayName}
+          iconDataUri={iconDataUri}
+          workspace={flattenedWorkspace}
+          selected={rowModel.selected}
+          onPress={() => {
+            if (!serverId) {
+              return
+            }
+            onWorkspacePress?.()
+            router.replace(buildHostWorkspaceRoute(serverId, flattenedWorkspace.workspaceId) as any)
+          }}
+          drag={drag}
+          isDragging={isDragging}
+          dragHandleProps={dragHandleProps}
         />
-      ) : null}
+      ) : (
+        <>
+          <ProjectHeaderRow
+            project={project}
+            displayName={displayName}
+            iconDataUri={iconDataUri}
+            workspace={null}
+            selected={false}
+            chevron={rowModel.chevron}
+            onPress={onToggleCollapsed}
+            onCreateWorktree={
+              rowModel.trailingAction === 'new_worktree' && onCreateWorktree
+                ? () => onCreateWorktree(project)
+                : undefined
+            }
+            drag={drag}
+            isDragging={isDragging}
+            menuController={null}
+            dragHandleProps={dragHandleProps}
+          />
+
+          {!collapsed ? (
+            <DraggableList
+              testID={`sidebar-workspace-list-${project.projectKey}`}
+              data={project.workspaces}
+              keyExtractor={(workspace) => workspace.workspaceKey}
+              renderItem={renderWorkspace}
+              onDragEnd={(workspaces) => onWorkspaceReorder(project.projectKey, workspaces)}
+              scrollEnabled={false}
+              useDragHandle
+              nestable={useNestable}
+              simultaneousGestureRef={parentGestureRef}
+              containerStyle={styles.workspaceListContainer}
+            />
+          ) : null}
+        </>
+      )}
     </View>
   )
 }
@@ -1118,6 +1421,21 @@ export function SidebarWorkspaceList({
     [getWorkspaceOrder, serverId, setWorkspaceOrder]
   )
 
+  const handleCreateWorktree = useCallback(
+    (project: SidebarProjectEntry) => {
+      if (!serverId || project.projectKind !== 'git') {
+        return
+      }
+      router.push(
+        buildHostNewAgentRoute(serverId, {
+          workingDir: project.iconWorkingDir,
+          worktreeMode: 'create',
+        }) as any
+      )
+    },
+    [serverId]
+  )
+
   const renderProject = useCallback(
     ({ item, drag, isActive, dragHandleProps }: DraggableRenderItemInfo<SidebarProjectEntry>) => {
       return (
@@ -1134,6 +1452,7 @@ export function SidebarWorkspaceList({
           onToggleCollapsed={() => toggleProjectCollapsed(item.projectKey)}
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
+          onCreateWorktree={handleCreateWorktree}
           drag={drag}
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
@@ -1144,6 +1463,7 @@ export function SidebarWorkspaceList({
     [
       activeWorkspaceSelection,
       collapsedProjectKeys,
+      handleCreateWorktree,
       handleWorkspaceReorder,
       onWorkspacePress,
       parentGestureRef,
@@ -1273,13 +1593,20 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectIcon: {
-    width: theme.iconSize.sm,
-    height: theme.iconSize.sm,
+    width: '100%',
+    height: '100%',
     borderRadius: theme.borderRadius.sm,
   },
+  projectLeadingVisualSlot: {
+    width: theme.iconSize.md,
+    height: theme.iconSize.md,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   projectIconFallback: {
-    width: theme.iconSize.sm,
-    height: theme.iconSize.sm,
+    width: '100%',
+    height: '100%',
     borderRadius: theme.borderRadius.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -1295,6 +1622,37 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     flex: 1,
     minWidth: 0,
+  },
+  projectActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    flexShrink: 0,
+  },
+  projectActionButtonHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  projectActionButtonText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  projectIconActionButton: {
+    width: 24,
+    height: 24,
+    borderRadius: theme.borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  projectIconActionButtonHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  projectActionTooltipText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.xs,
   },
   workspaceRow: {
     minHeight: 36,
@@ -1338,7 +1696,7 @@ const styles = StyleSheet.create((theme) => ({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
   },
-  workspaceRowSelected: {
+  sidebarRowSelected: {
     backgroundColor: theme.colors.surface2,
   },
   workspaceRowContainer: {

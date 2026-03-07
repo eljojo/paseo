@@ -910,6 +910,18 @@ export const PaseoWorktreeArchiveRequestSchema = z.object({
   requestId: z.string(),
 })
 
+export const OpenProjectRequestSchema = z.object({
+  type: z.literal('open_project_request'),
+  cwd: z.string(),
+  requestId: z.string(),
+})
+
+export const ArchiveWorkspaceRequestSchema = z.object({
+  type: z.literal('archive_workspace_request'),
+  workspaceId: z.string(),
+  requestId: z.string(),
+})
+
 // Highlighted diff token schema
 // Note: style can be a compound class name (e.g., "heading meta") from the syntax highlighter
 const HighlightTokenSchema = z.object({
@@ -1148,6 +1160,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion('type', [
   DirectorySuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
+  OpenProjectRequestSchema,
+  ArchiveWorkspaceRequestSchema,
   FileExplorerRequestSchema,
   ProjectIconRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -1469,6 +1483,10 @@ export const ProjectPlacementPayloadSchema = z.object({
 export const WorkspaceDescriptorPayloadSchema = z.object({
   id: z.string(),
   projectId: z.string(),
+  projectDisplayName: z.string(),
+  projectRootPath: z.string(),
+  projectKind: z.enum(['git', 'non_git']),
+  workspaceKind: z.enum(['local_checkout', 'worktree', 'directory']),
   name: z.string(),
   status: WorkspaceStateBucketSchema,
   activityAt: z.string().nullable(),
@@ -1562,6 +1580,25 @@ export const WorkspaceUpdateMessageSchema = z.object({
       id: z.string(),
     }),
   ]),
+})
+
+export const OpenProjectResponseMessageSchema = z.object({
+  type: z.literal('open_project_response'),
+  payload: z.object({
+    requestId: z.string(),
+    workspace: WorkspaceDescriptorPayloadSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+})
+
+export const ArchiveWorkspaceResponseMessageSchema = z.object({
+  type: z.literal('archive_workspace_response'),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    archivedAt: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
 })
 
 export const FetchAgentResponseMessageSchema = z.object({
@@ -2133,6 +2170,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion('type', [
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
   FetchWorkspacesResponseMessageSchema,
+  OpenProjectResponseMessageSchema,
+  ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
   SendAgentMessageResponseMessageSchema,
@@ -2202,6 +2241,8 @@ export type WorkspaceStateBucket = z.infer<typeof WorkspaceStateBucketSchema>
 export type WorkspaceDescriptorPayload = z.infer<typeof WorkspaceDescriptorPayloadSchema>
 export type FetchAgentsResponseMessage = z.infer<typeof FetchAgentsResponseMessageSchema>
 export type FetchWorkspacesResponseMessage = z.infer<typeof FetchWorkspacesResponseMessageSchema>
+export type OpenProjectResponseMessage = z.infer<typeof OpenProjectResponseMessageSchema>
+export type ArchiveWorkspaceResponseMessage = z.infer<typeof ArchiveWorkspaceResponseMessageSchema>
 export type FetchAgentResponseMessage = z.infer<typeof FetchAgentResponseMessageSchema>
 export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
@@ -2278,6 +2319,8 @@ export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSc
 export type PaseoWorktreeListResponse = z.infer<typeof PaseoWorktreeListResponseSchema>
 export type PaseoWorktreeArchiveRequest = z.infer<typeof PaseoWorktreeArchiveRequestSchema>
 export type PaseoWorktreeArchiveResponse = z.infer<typeof PaseoWorktreeArchiveResponseSchema>
+export type OpenProjectRequest = z.infer<typeof OpenProjectRequestSchema>
+export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequestSchema>
 export type FileExplorerRequest = z.infer<typeof FileExplorerRequestSchema>
 export type FileExplorerResponse = z.infer<typeof FileExplorerResponseSchema>
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>

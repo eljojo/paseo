@@ -3,6 +3,7 @@ import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSessionStore } from "@/stores/session-store";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import {
+  buildHostOpenProjectRoute,
   buildHostRootRoute,
   buildHostWorkspaceAgentRoute,
   buildHostWorkspaceRoute,
@@ -15,9 +16,12 @@ export default function HostIndexRoute() {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ serverId?: string }>();
   const serverId = typeof params.serverId === "string" ? params.serverId : "";
-  const { preferences, isLoading: preferencesLoading } = useFormPreferences();
+  const { isLoading: preferencesLoading } = useFormPreferences();
   const sessionAgents = useSessionStore(
     (state) => (serverId ? state.sessions[serverId]?.agents : undefined)
+  );
+  const sessionWorkspaces = useSessionStore(
+    (state) => (serverId ? state.sessions[serverId]?.workspaces : undefined)
   );
 
   useEffect(() => {
@@ -37,13 +41,20 @@ export default function HostIndexRoute() {
       }
 
       const visibleAgents = sessionAgents
-        ? Array.from(sessionAgents.values()).filter(
-            (agent) => !agent.archivedAt
-          )
+        ? Array.from(sessionAgents.values()).filter((agent) => !agent.archivedAt)
         : [];
       visibleAgents.sort(
         (left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime()
       );
+
+      const visibleWorkspaces = sessionWorkspaces
+        ? Array.from(sessionWorkspaces.values())
+        : [];
+      visibleWorkspaces.sort((left, right) => {
+        const leftTime = left.activityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+        const rightTime = right.activityAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+        return rightTime - leftTime;
+      });
 
       const primaryAgent = visibleAgents[0];
       if (primaryAgent?.cwd?.trim()) {
@@ -57,21 +68,23 @@ export default function HostIndexRoute() {
         return;
       }
 
-      const preferredWorkingDir =
-        preferences.serverId === serverId ? preferences.workingDir?.trim() : "";
-      const workspaceId = preferredWorkingDir || ".";
-      router.replace(buildHostWorkspaceRoute(serverId, workspaceId) as any);
+      const primaryWorkspace = visibleWorkspaces[0];
+      if (primaryWorkspace?.id?.trim()) {
+        router.replace(buildHostWorkspaceRoute(serverId, primaryWorkspace.id.trim()) as any);
+        return;
+      }
+
+      router.replace(buildHostOpenProjectRoute(serverId) as any);
     }, HOST_ROOT_REDIRECT_DELAY_MS);
 
     return () => clearTimeout(timer);
   }, [
     pathname,
-    preferences.serverId,
-    preferences.workingDir,
     preferencesLoading,
     router,
     serverId,
     sessionAgents,
+    sessionWorkspaces,
   ]);
 
   return null;

@@ -104,6 +104,7 @@ type DraftAgentParams = {
   model?: string
   thinkingOptionId?: string
   workingDir?: string
+  worktreeMode?: string
 }
 
 type DraftAgentScreenProps = {
@@ -160,6 +161,11 @@ function DraftAgentScreenContent({
   const resolvedModel = getParamValue(params.model)
   const resolvedThinkingOptionId = getParamValue(params.thinkingOptionId)
   const resolvedWorkingDir = getParamValue(params.workingDir)
+  const resolvedWorktreeMode = getParamValue(params.worktreeMode)
+  const initialWorktreeMode =
+    resolvedWorktreeMode === 'create' || resolvedWorktreeMode === 'attach'
+      ? resolvedWorktreeMode
+      : 'none'
 
   const onlineServerIds = useMemo(() => {
     if (daemons.length === 0) return []
@@ -234,7 +240,9 @@ function DraftAgentScreenContent({
   const draftIdRef = useRef(generateDraftId())
   const draftAgentIdRef = useRef(generateDraftId())
 
-  const [worktreeMode, setWorktreeMode] = useState<'none' | 'create' | 'attach'>('none')
+  const [worktreeMode, setWorktreeMode] = useState<'none' | 'create' | 'attach'>(
+    initialWorktreeMode
+  )
   const [baseBranch, setBaseBranch] = useState('')
   const [worktreeSlug, setWorktreeSlug] = useState('')
   const [selectedWorktreePath, setSelectedWorktreePath] = useState('')

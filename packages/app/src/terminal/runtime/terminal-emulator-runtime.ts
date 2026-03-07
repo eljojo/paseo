@@ -36,6 +36,8 @@ type TerminalEmulatorRuntimeDisposables = {
   disposeInput: () => void;
   disconnectResizeObserver: () => void;
   removeWindowResize: () => void;
+  removeWindowFocus: () => void;
+  removeDocumentVisibilityChange: () => void;
   removeVisualViewportResize: () => void;
   clearFitInterval: () => void;
   clearFitTimeouts: () => void;
@@ -101,6 +103,19 @@ export class TerminalEmulatorRuntime {
   private inFlightOutputOperation: TerminalOutputOperation | null = null;
   private inFlightOutputOperationTimeout: ReturnType<typeof setTimeout> | null = null;
   private suppressInput = false;
+
+  private handleVisibilityRestore = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+      return;
+    }
+
+    this.fitAndEmitResize?.(true);
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        this.fitAndEmitResize?.(true);
+      });
+    }
+  };
 
   setCallbacks(input: { callbacks: TerminalEmulatorRuntimeCallbacks }): void {
     this.callbacks = input.callbacks;
@@ -311,6 +326,15 @@ export class TerminalEmulatorRuntime {
 
     const windowResizeHandler = () => fitAndEmitResize(false);
     window.addEventListener("resize", windowResizeHandler);
+    const windowFocusHandler = () => {
+      this.handleVisibilityRestore();
+    };
+    window.addEventListener("focus", windowFocusHandler);
+
+    const documentVisibilityChangeHandler = () => {
+      this.handleVisibilityRestore();
+    };
+    document.addEventListener("visibilitychange", documentVisibilityChangeHandler);
 
     const visualViewport = window.visualViewport;
     const visualViewportResizeHandler = () => fitAndEmitResize(false);
@@ -369,6 +393,12 @@ export class TerminalEmulatorRuntime {
       removeWindowResize: () => {
         window.removeEventListener("resize", windowResizeHandler);
       },
+      removeWindowFocus: () => {
+        window.removeEventListener("focus", windowFocusHandler);
+      },
+      removeDocumentVisibilityChange: () => {
+        document.removeEventListener("visibilitychange", documentVisibilityChangeHandler);
+      },
       removeVisualViewportResize: () => {
         visualViewport?.removeEventListener("resize", visualViewportResizeHandler);
       },
@@ -410,6 +440,8 @@ export class TerminalEmulatorRuntime {
       disposables.disposeInput();
       disposables.disconnectResizeObserver();
       disposables.removeWindowResize();
+      disposables.removeWindowFocus();
+      disposables.removeDocumentVisibilityChange();
       disposables.removeVisualViewportResize();
       disposables.clearFitInterval();
       disposables.clearFitTimeouts();

@@ -25,7 +25,7 @@ import { formatConnectionStatus } from '@/utils/daemons'
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from '@/constants/layout'
 import {
   buildHostAgentsRoute,
-  buildHostNewAgentRoute,
+  buildHostOpenProjectRoute,
   buildHostSettingsRoute,
   mapPathnameToServer,
   parseServerIdFromPathname,
@@ -158,23 +158,21 @@ export function LeftSidebar({ selectedAgentId: _selectedAgentId }: LeftSidebarPr
     closeToAgent()
   }, [closeToAgent])
 
-  const handleCreateAgentClean = useCallback(() => {
+  const handleOpenProject = useCallback(() => {
     if (!activeServerId) {
       return
     }
-    router.push(buildHostNewAgentRoute(activeServerId) as any)
+    router.push(buildHostOpenProjectRoute(activeServerId) as any)
   }, [activeServerId])
 
-  // Mobile: close sidebar and navigate
-  const handleCreateAgentCleanMobile = useCallback(() => {
+  const handleOpenProjectMobile = useCallback(() => {
     closeToAgent()
-    handleCreateAgentClean()
-  }, [closeToAgent, handleCreateAgentClean])
+    handleOpenProject()
+  }, [closeToAgent, handleOpenProject])
 
-  // Desktop: just navigate, don't close
-  const handleCreateAgentCleanDesktop = useCallback(() => {
-    handleCreateAgentClean()
-  }, [handleCreateAgentClean])
+  const handleOpenProjectDesktop = useCallback(() => {
+    handleOpenProject()
+  }, [handleOpenProject])
 
   // Mobile: close sidebar and navigate
   const handleSettingsMobile = useCallback(() => {
@@ -332,7 +330,7 @@ export function LeftSidebar({ selectedAgentId: _selectedAgentId }: LeftSidebarPr
                   <Pressable
                     style={styles.newAgentButton}
                     testID="sidebar-new-agent"
-                    onPress={handleCreateAgentCleanMobile}
+                    onPress={handleOpenProjectMobile}
                   >
                     {({ hovered }) => (
                       <>
@@ -346,7 +344,7 @@ export function LeftSidebar({ selectedAgentId: _selectedAgentId }: LeftSidebarPr
                             hovered && styles.newAgentButtonTextHovered,
                           ]}
                         >
-                          New agent
+                          Open project
                         </Text>
                       </>
                     )}
@@ -459,7 +457,7 @@ export function LeftSidebar({ selectedAgentId: _selectedAgentId }: LeftSidebarPr
           <Pressable
             style={styles.newAgentButton}
             testID="sidebar-new-agent"
-            onPress={handleCreateAgentCleanDesktop}
+            onPress={handleOpenProjectDesktop}
           >
             {({ hovered }) => (
               <>
@@ -470,7 +468,7 @@ export function LeftSidebar({ selectedAgentId: _selectedAgentId }: LeftSidebarPr
                 <Text
                   style={[styles.newAgentButtonText, hovered && styles.newAgentButtonTextHovered]}
                 >
-                  New agent
+                  Open project
                 </Text>
               </>
             )}

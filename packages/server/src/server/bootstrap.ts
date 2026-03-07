@@ -50,6 +50,11 @@ import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import { createAllClients, shutdownProviders } from "./agent/provider-registry.js";
+import { bootstrapWorkspaceRegistries } from "./workspace-registry-bootstrap.js";
+import {
+  FileBackedProjectRegistry,
+  FileBackedWorkspaceRegistry,
+} from "./workspace-registry.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import {
   createConnectionOfferV2,
@@ -289,6 +294,14 @@ export async function createPaseoDaemon(
   const httpServer = createHTTPServer(app);
 
   const agentStorage = new AgentStorage(config.agentStoragePath, logger);
+  const projectRegistry = new FileBackedProjectRegistry(
+    path.join(config.paseoHome, "projects", "projects.json"),
+    logger
+  );
+  const workspaceRegistry = new FileBackedWorkspaceRegistry(
+    path.join(config.paseoHome, "projects", "workspaces.json"),
+    logger
+  );
   const agentManager = new AgentManager({
     clients: {
       ...createAllClients(logger, {
@@ -308,6 +321,13 @@ export async function createPaseoDaemon(
     agentStorage
   );
   await agentStorage.initialize();
+  await bootstrapWorkspaceRegistries({
+    paseoHome: config.paseoHome,
+    agentStorage,
+    projectRegistry,
+    workspaceRegistry,
+    logger,
+  });
   const persistedRecords = await agentStorage.list();
   logger.info(
     `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`
@@ -532,7 +552,9 @@ export async function createPaseoDaemon(
       } catch (error) {
         logger.error({ err: error, intent }, "Failed to handle daemon lifecycle intent");
       }
-    }
+    },
+    projectRegistry,
+    workspaceRegistry
   );
   unsubscribeSpeechReadiness = subscribeSpeechReadiness((snapshot) => {
     wsServer?.publishSpeechReadiness(snapshot);

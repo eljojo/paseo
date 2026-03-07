@@ -484,6 +484,7 @@ export default function RootLayout() {
                                 <Stack.Screen name="h/[serverId]/index" />
                                 <Stack.Screen name="h/[serverId]/agents" />
                                 <Stack.Screen name="h/[serverId]/new-agent" />
+                                <Stack.Screen name="h/[serverId]/open-project" />
                                 <Stack.Screen name="h/[serverId]/settings" />
                                 <Stack.Screen name="pair-scan" />
                               </Stack>

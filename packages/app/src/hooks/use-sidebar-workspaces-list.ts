@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
-import { useSessionStore } from '@/stores/session-store'
+import { normalizeWorkspaceDescriptor, useSessionStore } from '@/stores/session-store'
 import { getHostRuntimeStore } from '@/runtime/host-runtime'
 import { useSidebarOrderStore } from '@/stores/sidebar-order-store'
 import type { WorkspaceDescriptor } from '@/stores/session-store'
 import { projectDisplayNameFromProjectId } from '@/utils/project-display-name'
-import { normalizeWorkspaceIdentity } from '@/utils/workspace-identity'
 
 const EMPTY_ORDER: string[] = []
 const EMPTY_PROJECTS: SidebarProjectEntry[] = []
@@ -15,6 +14,7 @@ export interface SidebarWorkspaceEntry {
   workspaceKey: string
   serverId: string
   workspaceId: string
+  workspaceKind: WorkspaceDescriptor['workspaceKind']
   name: string
   activityAt: Date | null
   statusBucket: SidebarStateBucket
@@ -23,6 +23,7 @@ export interface SidebarWorkspaceEntry {
 export interface SidebarProjectEntry {
   projectKey: string
   projectName: string
+  projectKind: WorkspaceDescriptor['projectKind']
   iconWorkingDir: string
   statusBucket: SidebarStateBucket
   activeCount: number
@@ -110,8 +111,9 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       byProject.get(workspace.projectId) ??
       ({
         projectKey: workspace.projectId,
-        projectName: projectDisplayNameFromProjectId(workspace.projectId),
-        iconWorkingDir: workspace.id,
+        projectName: workspace.projectDisplayName || projectDisplayNameFromProjectId(workspace.projectId),
+        projectKind: workspace.projectKind,
+        iconWorkingDir: workspace.projectRootPath || workspace.id,
         statusBucket: 'done',
         activeCount: 0,
         totalWorkspaces: 0,
@@ -123,6 +125,7 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       workspaceKey: `${input.serverId}:${workspace.id}`,
       serverId: input.serverId,
       workspaceId: workspace.id,
+      workspaceKind: workspace.workspaceKind,
       name: workspace.name,
       activityAt: workspace.activityAt,
       statusBucket: workspace.status,
@@ -241,18 +244,15 @@ function getWorkspaceOrderScopeKey(serverId: string, projectKey: string): string
 function toWorkspaceDescriptor(payload: {
   id: string
   projectId: string
+  projectDisplayName: string
+  projectRootPath: string
+  projectKind: WorkspaceDescriptor['projectKind']
+  workspaceKind: WorkspaceDescriptor['workspaceKind']
   name: string
   status: WorkspaceDescriptor['status']
   activityAt: string | null
 }): WorkspaceDescriptor {
-  const activityAt = payload.activityAt ? new Date(payload.activityAt) : null
-  return {
-    id: normalizeWorkspaceIdentity(payload.id) ?? payload.id,
-    projectId: payload.projectId,
-    name: payload.name,
-    status: payload.status,
-    activityAt: activityAt && !Number.isNaN(activityAt.getTime()) ? activityAt : null,
-  }
+  return normalizeWorkspaceDescriptor(payload)
 }
 
 export function useSidebarWorkspacesList(options?: {

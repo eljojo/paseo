@@ -33,6 +33,8 @@ import type {
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconResponse,
+  OpenProjectResponseMessage,
+  ArchiveWorkspaceResponseMessage,
   ListCommandsResponse,
   ListProviderModelsResponseMessage,
   ListAvailableProvidersResponse,
@@ -305,6 +307,8 @@ export type FetchWorkspacesOptions = Omit<FetchWorkspacesRequest, 'type' | 'requ
 }
 export type FetchWorkspacesEntry = FetchWorkspacesPayload['entries'][number]
 export type FetchWorkspacesPageInfo = FetchWorkspacesPayload['pageInfo']
+type OpenProjectPayload = OpenProjectResponseMessage['payload']
+type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage['payload']
 
 export type FetchAgentResult = {
   agent: AgentSnapshotPayload
@@ -1140,6 +1144,30 @@ export class DaemonClient {
         }
         return msg.payload
       },
+    })
+  }
+
+  async openProject(cwd: string, requestId?: string): Promise<OpenProjectPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: 'open_project_request',
+        cwd,
+      },
+      responseType: 'open_project_response',
+      timeout: 10000,
+    })
+  }
+
+  async archiveWorkspace(workspaceId: string, requestId?: string): Promise<ArchiveWorkspacePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: 'archive_workspace_request',
+        workspaceId,
+      },
+      responseType: 'archive_workspace_response',
+      timeout: 10000,
     })
   }
 

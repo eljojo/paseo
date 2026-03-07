@@ -6,7 +6,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import {
-  buildHostNewAgentRoute,
+  buildHostOpenProjectRoute,
   buildHostWorkspaceRoute,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -99,7 +99,7 @@ export function useKeyboardShortcuts({
       return true;
     };
 
-    const navigateToNewAgent = (): boolean => {
+    const navigateToOpenProject = (): boolean => {
       let targetServerId = parseServerIdFromPathname(pathname);
 
       if (!targetServerId) {
@@ -111,7 +111,7 @@ export function useKeyboardShortcuts({
         return false;
       }
 
-      router.push(buildHostNewAgentRoute(targetServerId) as any);
+      router.push(buildHostOpenProjectRoute(targetServerId) as any);
       return true;
     };
 
@@ -171,7 +171,7 @@ export function useKeyboardShortcuts({
     }): boolean => {
       switch (input.action) {
         case "agent.new":
-          return navigateToNewAgent();
+          return navigateToOpenProject();
         case "workspace.tab.new":
           return requestWorkspaceTabAction({ kind: "new" });
         case "workspace.tab.close.current":
