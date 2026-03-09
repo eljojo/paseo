@@ -25,12 +25,9 @@ function Home() {
   return (
     <CursorFieldProvider>
       {/* Hero section with background image */}
-      <div
-        className="relative bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: 'url(/hero-bg.jpg)' }}
-      >
+      <div className="relative bg-cover bg-center bg-no-repeat">
         <div className="absolute inset-0 bg-background/90" />
-        <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-t from-black to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-64 bg-linear-to-t from-black to-transparent" />
 
         <div className="relative p-6 pb-10 md:px-20 md:pt-20 md:pb-12 max-w-3xl mx-auto">
           <Nav />
@@ -117,23 +114,17 @@ function Nav() {
 function Hero() {
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl md:text-5xl font-medium tracking-tight">
-        Orchestrate coding agents from anywhere
+      <h1 className="text-3xl md:text-5xl font-bold tracking-tight">
+        One interface for all your coding agents
       </h1>
       <p className="text-white/70 text-lg leading-relaxed">
-        Run Claude Code, Codex, and OpenCode. From your phone, desktop and CLI, with voice support built-in.
+        Run Claude Code, Codex, and OpenCode on your machine. Connect from your phone or desktop.
       </p>
     </div>
   )
 }
 
-function Differentiator({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
+function Differentiator({ title, description }: { title: string; description: string }) {
   return (
     <div>
       <p className="font-medium text-sm">{title}</p>
@@ -183,13 +174,7 @@ function Features() {
   )
 }
 
-function Feature({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
+function Feature({ title, description }: { title: string; description: string }) {
   return (
     <div className="space-y-1">
       <p className="font-medium text-base">{title}</p>
@@ -226,17 +211,13 @@ function GetStarted() {
             <GlobeIcon className="h-4 w-4" />
             Launch Web App
           </a>
-          <span
-            className="relative group inline-flex items-center justify-center rounded-lg border border-white/10 px-3 py-2 text-white/40 cursor-default"
-          >
+          <span className="relative group inline-flex items-center justify-center rounded-lg border border-white/10 px-3 py-2 text-white/40 cursor-default">
             <AppleIcon className="h-5 w-5" />
             <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-white text-black text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
               Coming soon
             </span>
           </span>
-          <span
-            className="relative group inline-flex items-center justify-center rounded-lg border border-white/10 px-3 py-2 text-white/40 cursor-default"
-          >
+          <span className="relative group inline-flex items-center justify-center rounded-lg border border-white/10 px-3 py-2 text-white/40 cursor-default">
             <GooglePlayIcon className="h-5 w-5 opacity-40" />
             <span className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-white text-black text-xs whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
               Coming soon
@@ -286,25 +267,38 @@ function AppStoreIcon(props: React.SVGProps<SVGSVGElement>) {
       {...props}
     >
       <path d="M342.277 86.6927C463.326 84.6952 587.87 65.619 705.523 104.97C830.467 143.522 874.012 278.153 872.814 397.105C873.713 481.299 874.012 566.193 858.931 649.19C834.262 804.895 746.172 873.01 590.666 874.608C422.377 880.301 172.489 908.965 104.474 711.012C76.5092 599.452 86.6964 481.1 88.1946 366.843C98.9811 200.75 163.301 90.2882 342.277 86.6927ZM715.411 596.156C758.856 591.362 754.362 524.645 710.816 524.545C610.542 525.244 639.605 550.513 594.462 456.83C577.383 418.778 540.529 337.279 496.085 396.006C479.206 431.062 516.359 464.121 528.844 495.382C569.892 560.6 606.647 628.515 648.494 693.334C667.77 724.495 716.509 696.73 697.333 663.372C685.048 642.298 677.258 619.726 665.773 598.253C682.452 597.854 698.831 598.053 715.411 596.156Z" />
-      <path d="M697.234 663.371C716.41 696.729 667.671 724.494 648.395 693.333C606.548 628.614 569.794 560.699 528.745 495.381C516.161 464.219 479.107 431.161 495.986 396.005C540.43 337.178 577.384 418.776 594.363 456.829C639.506 550.512 610.443 525.243 710.717 524.544C754.263 524.644 758.757 591.361 715.312 596.155C698.732 598.052 682.453 597.852 665.674 598.252C677.159 619.725 684.95 642.297 697.234 663.371Z" fill="black" />
-      <path d="M474.312 257.679C486.597 230.913 517.059 198.453 545.224 224.92C564.3 242.298 551.316 269.465 538.332 287.242C489.194 363.747 450.242 445.844 405.598 524.845C445.448 528.341 485.598 525.844 525.149 532.835C564.1 539.827 558.907 597.455 519.256 598.353C442.153 601.35 365.049 595.457 287.845 599.652C260.28 597.554 225.024 612.336 203.751 589.065C161.104 516.456 275.761 527.442 317.608 524.546C343.776 499.377 356.659 456.93 377.833 425.769C395.311 394.608 412.39 363.147 429.868 331.986C432.964 322.199 418.982 314.109 415.486 305.12C349.169 230.713 442.153 172.885 474.312 257.679Z" fill="black" />
-      <path d="M265.471 626.12C284.647 595.758 329.491 609.042 330.39 643.199C325.296 664.872 313.511 684.647 298.53 701.027C275.758 724.997 235.009 703.124 242.5 670.864C246.195 654.485 256.882 640.302 265.471 626.12Z" fill="black" />
+      <path
+        d="M697.234 663.371C716.41 696.729 667.671 724.494 648.395 693.333C606.548 628.614 569.794 560.699 528.745 495.381C516.161 464.219 479.107 431.161 495.986 396.005C540.43 337.178 577.384 418.776 594.363 456.829C639.506 550.512 610.443 525.243 710.717 524.544C754.263 524.644 758.757 591.361 715.312 596.155C698.732 598.052 682.453 597.852 665.674 598.252C677.159 619.725 684.95 642.297 697.234 663.371Z"
+        fill="black"
+      />
+      <path
+        d="M474.312 257.679C486.597 230.913 517.059 198.453 545.224 224.92C564.3 242.298 551.316 269.465 538.332 287.242C489.194 363.747 450.242 445.844 405.598 524.845C445.448 528.341 485.598 525.844 525.149 532.835C564.1 539.827 558.907 597.455 519.256 598.353C442.153 601.35 365.049 595.457 287.845 599.652C260.28 597.554 225.024 612.336 203.751 589.065C161.104 516.456 275.761 527.442 317.608 524.546C343.776 499.377 356.659 456.93 377.833 425.769C395.311 394.608 412.39 363.147 429.868 331.986C432.964 322.199 418.982 314.109 415.486 305.12C349.169 230.713 442.153 172.885 474.312 257.679Z"
+        fill="black"
+      />
+      <path
+        d="M265.471 626.12C284.647 595.758 329.491 609.042 330.39 643.199C325.296 664.872 313.511 684.647 298.53 701.027C275.758 724.997 235.009 703.124 242.5 670.864C246.195 654.485 256.882 640.302 265.471 626.12Z"
+        fill="black"
+      />
     </svg>
   )
 }
 
 function GooglePlayIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 28.99 31.99"
-      aria-hidden="true"
-      {...props}
-    >
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28.99 31.99" aria-hidden="true" {...props}>
       <path d="M13.54 15.28.12 29.34a3.66 3.66 0 0 0 5.33 2.16l15.1-8.6Z" fill="#ea4335" />
-      <path d="m27.11 12.89-6.53-3.74-7.35 6.45 7.38 7.28 6.48-3.7a3.54 3.54 0 0 0 1.5-4.79 3.62 3.62 0 0 0-1.5-1.5z" fill="#fbbc04" />
-      <path d="M.12 2.66a3.57 3.57 0 0 0-.12.92v24.84a3.57 3.57 0 0 0 .12.92L14 15.64Z" fill="#4285f4" />
-      <path d="m13.64 16 6.94-6.85L5.5.51A3.73 3.73 0 0 0 3.63 0 3.64 3.64 0 0 0 .12 2.65Z" fill="#34a853" />
+      <path
+        d="m27.11 12.89-6.53-3.74-7.35 6.45 7.38 7.28 6.48-3.7a3.54 3.54 0 0 0 1.5-4.79 3.62 3.62 0 0 0-1.5-1.5z"
+        fill="#fbbc04"
+      />
+      <path
+        d="M.12 2.66a3.57 3.57 0 0 0-.12.92v24.84a3.57 3.57 0 0 0 .12.92L14 15.64Z"
+        fill="#4285f4"
+      />
+      <path
+        d="m13.64 16 6.94-6.85L5.5.51A3.73 3.73 0 0 0 3.63 0 3.64 3.64 0 0 0 .12 2.65Z"
+        fill="#34a853"
+      />
     </svg>
   )
 }
@@ -330,13 +324,7 @@ function GlobeIcon(props: React.SVGProps<SVGSVGElement>) {
   )
 }
 
-function Step({
-  number,
-  children,
-}: {
-  number: number
-  children: React.ReactNode
-}) {
+function Step({ number, children }: { number: number; children: React.ReactNode }) {
   return (
     <div className="flex gap-4">
       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-xs font-medium">
@@ -400,22 +388,19 @@ function Story() {
       <h2 className="text-2xl font-medium">Background</h2>
       <div className="space-y-4 text-sm text-white/60">
         <p>
-          I started using Claude Code soon after it launched, often on my phone
-          while going on walks to spend less time at my desk. I'd SSH into Tmux
-          from my phone. It worked, but the UX was rough. Dictation was bad, the
-          virtual keyboard was awkward, and the TUI would randomly start
-          flickering, which forced me to start over very often.
+          I started using Claude Code soon after it launched, often on my phone while going on walks
+          to spend less time at my desk. I'd SSH into Tmux from my phone. It worked, but the UX was
+          rough. Dictation was bad, the virtual keyboard was awkward, and the TUI would randomly
+          start flickering, which forced me to start over very often.
         </p>
         <p>
-          I started building a simple app to manage agents via voice. I continued
-          adding features as I needed them, and it slowly turned into what Paseo
-          is today.
+          I started building a simple app to manage agents via voice. I continued adding features as
+          I needed them, and it slowly turned into what Paseo is today.
         </p>
         <p>
-          Anthropic and OpenAI added coding agents to their mobile apps since I
-          started working on this, but they force you into cloud sandboxes where
-          you lose your whole setup. I also like testing different agents, so
-          locking myself to a single harness or model wasn't an option.
+          Anthropic and OpenAI added coding agents to their mobile apps since I started working on
+          this, but they force you into cloud sandboxes where you lose your whole setup. I also like
+          testing different agents, so locking myself to a single harness or model wasn't an option.
         </p>
       </div>
     </div>
@@ -428,55 +413,39 @@ function FAQ() {
       <h2 className="text-2xl font-medium">FAQ</h2>
       <div className="space-y-6">
         <FAQItem question="Is this free?">
-          Paseo is free and open source. It wraps CLI tools like Claude Code and
-          Codex, which you'll need to have installed and configured with your
-          own credentials. Voice is local-first by default and can optionally use
-          OpenAI speech providers if you configure them.
+          Paseo is free and open source. It wraps CLI tools like Claude Code and Codex, which you'll
+          need to have installed and configured with your own credentials. Voice is local-first by
+          default and can optionally use OpenAI speech providers if you configure them.
         </FAQItem>
         <FAQItem question="Does my code leave my machine?">
-          Paseo itself doesn't send your code anywhere. Agents run locally and
-          communicate with their own APIs as they normally would. We provide an
-          optional end-to-end encrypted relay for remote access, but you can
-          also connect directly over your local network or use your own tunnel.
+          Paseo itself doesn't send your code anywhere. Agents run locally and communicate with
+          their own APIs as they normally would. We provide an optional end-to-end encrypted relay
+          for remote access, but you can also connect directly over your local network or use your
+          own tunnel.
         </FAQItem>
-        <FAQItem question="What agents does it support?">
-          Claude Code, Codex, and OpenCode.
-        </FAQItem>
+        <FAQItem question="What agents does it support?">Claude Code, Codex, and OpenCode.</FAQItem>
         <FAQItem question="What's the business model?">There isn't one.</FAQItem>
         <FAQItem question="Isn't this just more screen time?">
-          I won't pretend this can't be misused to squeeze every minute of your
-          day into work. But for me it means less time at my desk, not more. I
-          brainstorm whole features with voice. I kick off work at my desk, then
-          check in from my phone during a walk. I see what an agent needs, send
-          a voice reply, and put my phone away.
+          I won't pretend this can't be misused to squeeze every minute of your day into work. But
+          for me it means less time at my desk, not more. I brainstorm whole features with voice. I
+          kick off work at my desk, then check in from my phone during a walk. I see what an agent
+          needs, send a voice reply, and put my phone away.
         </FAQItem>
-        <FAQItem question="What does Paseo mean?">
-          Stroll, in Spanish. 🚶‍♂️
-        </FAQItem>
+        <FAQItem question="What does Paseo mean?">Stroll, in Spanish. 🚶‍♂️</FAQItem>
       </div>
     </div>
   )
 }
 
-function FAQItem({
-  question,
-  children,
-}: {
-  question: string
-  children: React.ReactNode
-}) {
+function FAQItem({ question, children }: { question: string; children: React.ReactNode }) {
   return (
     <details className="group">
       <summary className="font-medium text-sm cursor-pointer list-none flex items-start gap-2">
         <span className="font-mono text-white/40 group-open:hidden">+</span>
-        <span className="font-mono text-white/40 hidden group-open:inline">
-          -
-        </span>
+        <span className="font-mono text-white/40 hidden group-open:inline">-</span>
         {question}
       </summary>
-      <div className="text-sm text-white/60 space-y-2 mt-2 ml-4">
-        {children}
-      </div>
+      <div className="text-sm text-white/60 space-y-2 mt-2 ml-4">{children}</div>
     </details>
   )
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { View, Text, Platform, Pressable } from 'react-native'
 import { StyleSheet, useUnistyles } from 'react-native-unistyles'
 import { Brain, ChevronDown, SlidersHorizontal } from 'lucide-react-native'
@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import { AdaptiveModalSheet } from '@/components/adaptive-modal-sheet'
 import type {
   AgentMode,
@@ -90,7 +91,12 @@ function ControlledStatusBar({
   const { theme } = useUnistyles()
   const isWeb = Platform.OS === 'web'
   const [prefsOpen, setPrefsOpen] = useState(false)
-  const dropdownMaxWidth = isWeb ? 360 : undefined
+  const [openSelector, setOpenSelector] = useState<'provider' | 'mode' | 'model' | 'thinking' | null>(null)
+
+  const providerAnchorRef = useRef<View>(null)
+  const modeAnchorRef = useRef<View>(null)
+  const modelAnchorRef = useRef<View>(null)
+  const thinkingAnchorRef = useRef<View>(null)
 
   const canSelectProvider = Boolean(onSelectProvider && providerOptions && providerOptions.length > 0)
   const canSelectMode = Boolean(onSelectMode && modeOptions && modeOptions.length > 0)
@@ -119,18 +125,47 @@ function ControlledStatusBar({
 
   const modelDisabled = disabled || isModelLoading || !modelOptions || modelOptions.length === 0
 
+  const SEARCH_THRESHOLD = 6
+
+  const comboboxProviderOptions = useMemo<ComboboxOption[]>(
+    () => (providerOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    [providerOptions]
+  )
+  const comboboxModeOptions = useMemo<ComboboxOption[]>(
+    () => (modeOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    [modeOptions]
+  )
+  const comboboxModelOptions = useMemo<ComboboxOption[]>(
+    () => (modelOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    [modelOptions]
+  )
+  const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
+    () => (thinkingOptions ?? []).map((o) => ({ id: o.id, label: o.label })),
+    [thinkingOptions]
+  )
+
+  const handleOpenChange = useCallback(
+    (selector: 'provider' | 'mode' | 'model' | 'thinking') => (nextOpen: boolean) => {
+      setOpenSelector(nextOpen ? selector : null)
+    },
+    []
+  )
+
   return (
     <View style={[styles.container, isWeb && { marginBottom: -theme.spacing[1] }]}>
       {isWeb ? (
         <>
           {providerOptions && providerOptions.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
+            <>
+              <Pressable
+                ref={providerAnchorRef}
+                collapsable={false}
                 disabled={disabled || !canSelectProvider}
-                style={({ pressed, hovered, open }) => [
+                onPress={() => setOpenSelector(openSelector === 'provider' ? null : 'provider')}
+                style={({ pressed, hovered }) => [
                   styles.modeBadge,
                   hovered && styles.modeBadgeHovered,
-                  (pressed || open) && styles.modeBadgePressed,
+                  (pressed || openSelector === 'provider') && styles.modeBadgePressed,
                   (disabled || !canSelectProvider) && styles.disabledBadge,
                 ]}
                 accessibilityRole="button"
@@ -139,34 +174,31 @@ function ControlledStatusBar({
               >
                 <Text style={styles.modeBadgeText}>{displayProvider}</Text>
                 <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                side="top"
-                align="start"
-                maxWidth={dropdownMaxWidth}
-                testID="agent-provider-menu"
-              >
-                {providerOptions.map((provider) => (
-                  <DropdownMenuItem
-                    key={provider.id}
-                    selected={provider.id === selectedProviderId}
-                    onSelect={() => onSelectProvider?.(provider.id)}
-                  >
-                    {provider.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </Pressable>
+              <Combobox
+                options={comboboxProviderOptions}
+                value={selectedProviderId ?? ''}
+                onSelect={(id) => onSelectProvider?.(id)}
+                searchable={comboboxProviderOptions.length > SEARCH_THRESHOLD}
+                open={openSelector === 'provider'}
+                onOpenChange={handleOpenChange('provider')}
+                anchorRef={providerAnchorRef}
+                desktopPlacement="top-start"
+              />
+            </>
           ) : null}
 
           {modeOptions && modeOptions.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
+            <>
+              <Pressable
+                ref={modeAnchorRef}
+                collapsable={false}
                 disabled={disabled || !canSelectMode}
-                style={({ pressed, hovered, open }) => [
+                onPress={() => setOpenSelector(openSelector === 'mode' ? null : 'mode')}
+                style={({ pressed, hovered }) => [
                   styles.modeBadge,
                   hovered && styles.modeBadgeHovered,
-                  (pressed || open) && styles.modeBadgePressed,
+                  (pressed || openSelector === 'mode') && styles.modeBadgePressed,
                   (disabled || !canSelectMode) && styles.disabledBadge,
                 ]}
                 accessibilityRole="button"
@@ -175,68 +207,60 @@ function ControlledStatusBar({
               >
                 <Text style={styles.modeBadgeText}>{displayMode}</Text>
                 <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                side="top"
-                align="start"
-                maxWidth={dropdownMaxWidth}
-                testID="agent-mode-menu"
-              >
-                {modeOptions.map((mode) => (
-                  <DropdownMenuItem
-                    key={mode.id}
-                    selected={mode.id === selectedModeId}
-                    onSelect={() => onSelectMode?.(mode.id)}
-                  >
-                    {mode.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </Pressable>
+              <Combobox
+                options={comboboxModeOptions}
+                value={selectedModeId ?? ''}
+                onSelect={(id) => onSelectMode?.(id)}
+                searchable={comboboxModeOptions.length > SEARCH_THRESHOLD}
+                open={openSelector === 'mode'}
+                onOpenChange={handleOpenChange('mode')}
+                anchorRef={modeAnchorRef}
+                desktopPlacement="top-start"
+              />
+            </>
           ) : null}
 
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              disabled={modelDisabled}
-              style={({ pressed, hovered, open }) => [
-                styles.modeBadge,
-                hovered && styles.modeBadgeHovered,
-                (pressed || open) && styles.modeBadgePressed,
-                modelDisabled && styles.disabledBadge,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Select agent model"
-              testID="agent-model-selector"
-            >
-              <Text style={styles.modeBadgeText}>{displayModel}</Text>
-              <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              side="top"
-              align="start"
-              maxWidth={dropdownMaxWidth}
-              testID="agent-model-menu"
-            >
-              {(modelOptions ?? []).map((model) => (
-                <DropdownMenuItem
-                  key={model.id}
-                  selected={model.id === selectedModelId}
-                  onSelect={() => onSelectModel?.(model.id)}
-                >
-                  {model.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Pressable
+            ref={modelAnchorRef}
+            collapsable={false}
+            disabled={modelDisabled}
+            onPress={() => setOpenSelector(openSelector === 'model' ? null : 'model')}
+            style={({ pressed, hovered }) => [
+              styles.modeBadge,
+              hovered && styles.modeBadgeHovered,
+              (pressed || openSelector === 'model') && styles.modeBadgePressed,
+              modelDisabled && styles.disabledBadge,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Select agent model"
+            testID="agent-model-selector"
+          >
+            <Text style={styles.modeBadgeText}>{displayModel}</Text>
+            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </Pressable>
+          <Combobox
+            options={comboboxModelOptions}
+            value={selectedModelId ?? ''}
+            onSelect={(id) => onSelectModel?.(id)}
+            searchable={comboboxModelOptions.length > SEARCH_THRESHOLD}
+            open={openSelector === 'model'}
+            onOpenChange={handleOpenChange('model')}
+            anchorRef={modelAnchorRef}
+            desktopPlacement="top-start"
+          />
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger
+            <>
+              <Pressable
+                ref={thinkingAnchorRef}
+                collapsable={false}
                 disabled={disabled || !canSelectThinking}
-                style={({ pressed, hovered, open }) => [
+                onPress={() => setOpenSelector(openSelector === 'thinking' ? null : 'thinking')}
+                style={({ pressed, hovered }) => [
                   styles.modeBadge,
                   hovered && styles.modeBadgeHovered,
-                  (pressed || open) && styles.modeBadgePressed,
+                  (pressed || openSelector === 'thinking') && styles.modeBadgePressed,
                   (disabled || !canSelectThinking) && styles.disabledBadge,
                 ]}
                 accessibilityRole="button"
@@ -250,24 +274,18 @@ function ControlledStatusBar({
                 />
                 <Text style={styles.modeBadgeText}>{displayThinking}</Text>
                 <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                side="top"
-                align="start"
-                maxWidth={dropdownMaxWidth}
-                testID="agent-thinking-menu"
-              >
-                {thinkingOptions.map((thinking) => (
-                  <DropdownMenuItem
-                    key={thinking.id}
-                    selected={thinking.id === selectedThinkingOptionId}
-                    onSelect={() => onSelectThinkingOption?.(thinking.id)}
-                  >
-                    {thinking.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </Pressable>
+              <Combobox
+                options={comboboxThinkingOptions}
+                value={selectedThinkingOptionId ?? ''}
+                onSelect={(id) => onSelectThinkingOption?.(id)}
+                searchable={comboboxThinkingOptions.length > SEARCH_THRESHOLD}
+                open={openSelector === 'thinking'}
+                onOpenChange={handleOpenChange('thinking')}
+                anchorRef={thinkingAnchorRef}
+                desktopPlacement="top-start"
+              />
+            </>
           ) : null}
         </>
       ) : (

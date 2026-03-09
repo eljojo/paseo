@@ -4,6 +4,8 @@ use http::Request;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+#[cfg(windows)]
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};

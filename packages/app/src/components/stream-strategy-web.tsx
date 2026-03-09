@@ -235,22 +235,25 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     [onNearBottomChange]
   )
 
-  const scheduleStickToBottom = useCallback((source = 'unknown') => {
-    const scrollContainer = scrollContainerRef.current
-    if (scrollContainer && isScrollContainerOverscrolledPastBottom(scrollContainer)) {
-      return
-    }
-    if (pendingAutoScrollFrameRef.current !== null) {
-      return
-    }
-    pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
-      pendingAutoScrollFrameRef.current = null
-      if (!followOutputRef.current) {
+  const scheduleStickToBottom = useCallback(
+    (source = 'unknown') => {
+      const scrollContainer = scrollContainerRef.current
+      if (scrollContainer && isScrollContainerOverscrolledPastBottom(scrollContainer)) {
         return
       }
-      scrollMessagesToBottom('auto', source)
-    })
-  }, [scrollMessagesToBottom])
+      if (pendingAutoScrollFrameRef.current !== null) {
+        return
+      }
+      pendingAutoScrollFrameRef.current = window.requestAnimationFrame(() => {
+        pendingAutoScrollFrameRef.current = null
+        if (!followOutputRef.current) {
+          return
+        }
+        scrollMessagesToBottom('auto', source)
+      })
+    },
+    [scrollMessagesToBottom]
+  )
   const forceStickToBottom = useCallback(() => {
     cancelPendingStickToBottom()
     scrollMessagesToBottom('auto', 'force')
