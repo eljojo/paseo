@@ -67,17 +67,12 @@ import {
 } from "./use-bottom-anchor-controller";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
-import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { buildHostWorkspaceFileRoute } from "@/utils/host-routes";
 
 const isUserMessageItem = (item?: StreamItem) => item?.kind === "user_message";
 const isToolSequenceItem = (item?: StreamItem) =>
   item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
-const AGENT_STREAM_LOG_TAG = "[AgentStreamView]";
-const STREAM_ITEM_LOG_MIN_COUNT = 200;
-const STREAM_ITEM_LOG_DELTA_THRESHOLD = 50;
-
 export interface AgentStreamViewHandle {
   scrollToBottom(reason?: BottomAnchorLocalRequest["reason"]): void;
   prepareForViewportChange(): void;
@@ -116,7 +111,6 @@ export const AgentStreamView = forwardRef<AgentStreamViewHandle, AgentStreamView
     [isMobile]
   );
   const [isNearBottom, setIsNearBottom] = useState(true);
-  const streamItemCountRef = useRef(0);
   const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(new Set());
   const openFileExplorer = usePanelStore((state) => state.openFileExplorer);
   const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
@@ -461,74 +455,6 @@ export const AgentStreamView = forwardRef<AgentStreamViewHandle, AgentStreamView
       ),
     [pendingPermissions, agentId]
   );
-
-  useEffect(() => {
-    if (!isPerfLoggingEnabled()) {
-      return;
-    }
-    const totalCount = streamItems.length;
-    const prevCount = streamItemCountRef.current;
-    if (totalCount === prevCount) {
-      return;
-    }
-    const delta = Math.abs(totalCount - prevCount);
-    streamItemCountRef.current = totalCount;
-    if (
-      totalCount < STREAM_ITEM_LOG_MIN_COUNT &&
-      delta < STREAM_ITEM_LOG_DELTA_THRESHOLD
-    ) {
-      return;
-    }
-    let userCount = 0;
-    let assistantCount = 0;
-    let toolCallCount = 0;
-    let thoughtCount = 0;
-    let activityCount = 0;
-    let todoCount = 0;
-    for (const item of streamItems) {
-      switch (item.kind) {
-        case "user_message":
-          userCount += 1;
-          break;
-        case "assistant_message":
-          assistantCount += 1;
-          break;
-        case "tool_call":
-          toolCallCount += 1;
-          break;
-        case "thought":
-          thoughtCount += 1;
-          break;
-        case "activity_log":
-          activityCount += 1;
-          break;
-        case "todo_list":
-          todoCount += 1;
-          break;
-        default:
-          break;
-      }
-    }
-    const metrics =
-      totalCount >= STREAM_ITEM_LOG_MIN_COUNT
-        ? measurePayload(streamItems)
-        : null;
-    perfLog(AGENT_STREAM_LOG_TAG, {
-      event: "stream_items",
-      agentId,
-      totalCount,
-      userCount,
-      assistantCount,
-      toolCallCount,
-      thoughtCount,
-      activityCount,
-      todoCount,
-      pendingPermissionCount: pendingPermissionItems.length,
-      streamHeadCount: streamHead?.length ?? 0,
-      payloadApproxBytes: metrics?.approxBytes ?? 0,
-      payloadFieldCount: metrics?.fieldCount ?? 0,
-    });
-  }, [agentId, pendingPermissionItems.length, streamHead, streamItems]);
 
   const showWorkingIndicator = agent.status === "running";
   const renderModel = useMemo<AgentStreamRenderModel>(() => {

@@ -38,7 +38,6 @@ import { useCheckoutPrStatusQuery } from "@/hooks/use-checkout-pr-status-query";
 import { useHorizontalScrollOptional } from "@/contexts/horizontal-scroll-context";
 import { useExplorerSidebarAnimation } from "@/contexts/explorer-sidebar-animation-context";
 import { Fonts } from "@/constants/theme";
-import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
 import {
   DropdownMenu,
@@ -65,11 +64,6 @@ export type { GitActionId, GitAction, GitActions } from "@/hooks/use-git-actions
 function openURLInNewTab(url: string): void {
   void openExternalUrl(url);
 }
-
-const DIFF_PANE_LOG_TAG = "[GitDiffPane]";
-const DIFF_FILE_LOG_TAG = "[DiffFileSection]";
-const DIFF_FILE_LOG_LINE_THRESHOLD = 500;
-const DIFF_FILE_LOG_TOKEN_THRESHOLD = 5000;
 
 type HighlightStyle = NonNullable<HighlightToken["style"]>;
 
@@ -199,75 +193,14 @@ const DiffFileHeader = memo(function DiffFileHeader({
   onHeaderHeightChange,
   testID,
 }: DiffFileSectionProps) {
-  const expandStartRef = useRef<number | null>(null);
   const layoutYRef = useRef<number | null>(null);
   const pressHandledRef = useRef(false);
   const pressInRef = useRef<{ ts: number; pageX: number; pageY: number } | null>(null);
 
-  const { hunkCount, lineCount, tokenCount } = useMemo(() => {
-    let totalLines = 0;
-    let totalTokens = 0;
-    for (const hunk of file.hunks) {
-      totalLines += hunk.lines.length;
-      for (const line of hunk.lines) {
-        if (line.tokens) {
-          totalTokens += line.tokens.length;
-        }
-      }
-    }
-    return {
-      hunkCount: file.hunks.length,
-      lineCount: totalLines,
-      tokenCount: totalTokens,
-    };
-  }, [file]);
-
-  const shouldLogFileMetrics =
-    lineCount >= DIFF_FILE_LOG_LINE_THRESHOLD ||
-    tokenCount >= DIFF_FILE_LOG_TOKEN_THRESHOLD;
-
   const toggleExpanded = useCallback(() => {
     pressHandledRef.current = true;
-    if (isPerfLoggingEnabled() && shouldLogFileMetrics) {
-      expandStartRef.current = getNowMs();
-      perfLog(DIFF_FILE_LOG_TAG, {
-        event: "toggle",
-        path: file.path,
-        nextExpanded: !isExpanded,
-        hunkCount,
-        lineCount,
-        tokenCount,
-      });
-    }
     onToggle(file.path);
-  }, [file.path, onToggle, isExpanded, hunkCount, lineCount, tokenCount, shouldLogFileMetrics]);
-
-  useEffect(() => {
-    if (!isPerfLoggingEnabled() || !shouldLogFileMetrics) {
-      return;
-    }
-    const startMs = expandStartRef.current;
-    if (startMs === null) {
-      return;
-    }
-    expandStartRef.current = null;
-    const logCommit = () => {
-      const durationMs = getNowMs() - startMs;
-      perfLog(DIFF_FILE_LOG_TAG, {
-        event: isExpanded ? "expand_commit" : "collapse_commit",
-        path: file.path,
-        durationMs: Math.round(durationMs),
-        hunkCount,
-        lineCount,
-        tokenCount,
-      });
-    };
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => logCommit());
-    } else {
-      logCommit();
-    }
-  }, [isExpanded, file.path, hunkCount, lineCount, tokenCount, shouldLogFileMetrics]);
+  }, [file.path, onToggle]);
 
   return (
     <View
@@ -506,30 +439,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const headerHeightByPathRef = useRef<Record<string, number>>({});
   const bodyHeightByPathRef = useRef<Record<string, number>>({});
   const defaultHeaderHeightRef = useRef<number>(44);
-  const diffMetrics = useMemo(() => {
-    let hunkCount = 0;
-    let lineCount = 0;
-    let tokenCount = 0;
-    for (const file of files) {
-      hunkCount += file.hunks.length;
-      for (const hunk of file.hunks) {
-        lineCount += hunk.lines.length;
-        for (const line of hunk.lines) {
-          if (line.tokens) {
-            tokenCount += line.tokens.length;
-          }
-        }
-      }
-    }
-    return {
-      fileCount: files.length,
-      hunkCount,
-      lineCount,
-      tokenCount,
-    };
-  }, [files]);
-  const lastMetricsKeyRef = useRef<string | null>(null);
-
   const handleRefresh = useCallback(() => {
     setIsManualRefresh(true);
     void refreshDiff();
@@ -711,28 +620,6 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   useEffect(() => {
     setDiffModeOverride(null);
   }, [autoDiffMode]);
-
-  useEffect(() => {
-    if (!isPerfLoggingEnabled()) {
-      return;
-    }
-    const metricsKey = `${diffMetrics.fileCount}:${diffMetrics.hunkCount}:${diffMetrics.lineCount}:${diffMetrics.tokenCount}`;
-    if (lastMetricsKeyRef.current === metricsKey) {
-      return;
-    }
-    lastMetricsKeyRef.current = metricsKey;
-    perfLog(DIFF_PANE_LOG_TAG, {
-      event: "files_snapshot",
-      serverId,
-      workspaceId: workspaceId ?? cwd,
-      fileCount: diffMetrics.fileCount,
-      hunkCount: diffMetrics.hunkCount,
-      lineCount: diffMetrics.lineCount,
-      tokenCount: diffMetrics.tokenCount,
-      isLoading: isDiffLoading,
-      isFetching: isDiffFetching,
-    });
-  }, [cwd, diffMetrics, isDiffFetching, isDiffLoading, serverId, workspaceId]);
 
   const commitStatus = useCheckoutGitActionsStore((state) =>
     state.getStatus({ serverId, cwd, actionId: "commit" })

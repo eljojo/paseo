@@ -5,7 +5,6 @@ import { AgentInputArea } from '@/components/agent-input-area'
 import { FileDropZone } from '@/components/file-drop-zone'
 import { AgentStreamView } from '@/components/agent-stream-view'
 import type { ImageAttachment } from '@/components/message-input'
-import { MAX_CONTENT_WIDTH } from '@/constants/layout'
 import { useAgentFormState } from '@/hooks/use-agent-form-state'
 import { useDraftAgentCreateFlow } from '@/hooks/use-draft-agent-create-flow'
 import { useHostRuntimeSession } from '@/runtime/host-runtime'
@@ -260,8 +259,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     width: '100%',
-    alignSelf: 'center',
-    maxWidth: MAX_CONTENT_WIDTH,
     backgroundColor: theme.colors.surface0,
   },
   contentContainer: {

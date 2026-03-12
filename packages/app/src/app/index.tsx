@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore, useState } from 'react'
+import { useEffect, useSyncExternalStore, useState } from 'react'
 import { usePathname, useRouter } from 'expo-router'
 import { useHosts } from '@/runtime/host-runtime'
 import { shouldUseManagedDesktopDaemon } from '@/desktop/managed-runtime/managed-runtime'
@@ -13,8 +13,6 @@ import {
 } from './index-startup'
 
 const STARTUP_TIMEOUT_MS = 30_000
-const APP_START_TIME = performance.now()
-
 function useAnyHostOnline(serverIds: string[]): string | null {
   const runtime = getHostRuntimeStore()
   return useSyncExternalStore(
@@ -61,18 +59,6 @@ export default function Index() {
   const [hasTimedOut, setHasTimedOut] = useState(false)
   const isDesktopStartupRace = shouldUseManagedDesktopDaemon()
   const onlineServerId = useAnyHostOnline(daemons.map((daemon) => daemon.serverId))
-  const startupLogged = useRef(false)
-
-  useEffect(() => {
-    if (onlineServerId && !startupLogged.current) {
-      startupLogged.current = true
-      console.info('[Startup] host online', {
-        serverId: onlineServerId,
-        elapsedMs: Math.round(performance.now() - APP_START_TIME),
-      })
-    }
-  }, [onlineServerId])
-
   useEffect(() => {
     const timer = setTimeout(() => {
       setHasTimedOut(true)
@@ -89,10 +75,6 @@ export default function Index() {
     if (pathname !== '/' && pathname !== '') {
       return
     }
-    console.info('[Startup] navigating to host route', {
-      serverId: onlineServerId,
-      elapsedMs: Math.round(performance.now() - APP_START_TIME),
-    })
     router.replace(buildHostRootRoute(onlineServerId) as any)
   }, [onlineServerId, pathname, router])
 

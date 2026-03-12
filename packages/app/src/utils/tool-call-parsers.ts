@@ -1,11 +1,4 @@
 import { z } from "zod";
-import { getNowMs, isPerfLoggingEnabled, perfLog } from "./perf";
-
-const TOOL_CALL_DIFF_LOG_TAG = "[ToolCallDiff]";
-const LINE_DIFF_DURATION_THRESHOLD_MS = 16;
-const WORD_DIFF_DURATION_THRESHOLD_MS = 8;
-const LINE_DIFF_MATRIX_THRESHOLD = 200000;
-const WORD_DIFF_MATRIX_THRESHOLD = 50000;
 
 export type DiffSegment = {
   text: string;
@@ -56,14 +49,11 @@ function splitIntoWords(text: string): string[] {
 }
 
 function computeWordLevelDiff(oldLine: string, newLine: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
-  const shouldLog = isPerfLoggingEnabled();
-  const startMs = shouldLog ? getNowMs() : 0;
   const oldWords = splitIntoWords(oldLine);
   const newWords = splitIntoWords(newLine);
 
   const m = oldWords.length;
   const n = newWords.length;
-  const matrixSize = m * n;
 
   // LCS to find common words
   const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -131,22 +121,6 @@ function computeWordLevelDiff(oldLine: string, newLine: string): { oldSegments: 
   const oldSegments = buildSegments(oldWords, oldInLCS);
   const newSegments = buildSegments(newWords, newInLCS);
 
-  if (shouldLog) {
-    const durationMs = getNowMs() - startMs;
-    if (
-      durationMs >= WORD_DIFF_DURATION_THRESHOLD_MS ||
-      matrixSize >= WORD_DIFF_MATRIX_THRESHOLD
-    ) {
-      perfLog(TOOL_CALL_DIFF_LOG_TAG, {
-        event: "word_diff",
-        durationMs: Math.round(durationMs),
-        oldWordCount: m,
-        newWordCount: n,
-        matrixSize,
-      });
-    }
-  }
-
   return {
     oldSegments,
     newSegments,
@@ -154,8 +128,6 @@ function computeWordLevelDiff(oldLine: string, newLine: string): { oldSegments: 
 }
 
 export function buildLineDiff(originalText: string, updatedText: string): DiffLine[] {
-  const shouldLog = isPerfLoggingEnabled();
-  const startMs = shouldLog ? getNowMs() : 0;
   const originalLines = splitIntoLines(originalText);
   const updatedLines = splitIntoLines(updatedText);
 
@@ -166,7 +138,6 @@ export function buildLineDiff(originalText: string, updatedText: string): DiffLi
 
   const m = originalLines.length;
   const n = updatedLines.length;
-  const matrixSize = m * n;
   const dp: number[][] = Array.from({ length: m + 1 }, () =>
     Array(n + 1).fill(0)
   );
@@ -222,23 +193,6 @@ export function buildLineDiff(originalText: string, updatedText: string): DiffLi
       const { oldSegments, newSegments } = computeWordLevelDiff(oldLineText, newLineText);
       curr.segments = oldSegments;
       next.segments = newSegments;
-    }
-  }
-
-  if (shouldLog) {
-    const durationMs = getNowMs() - startMs;
-    if (
-      durationMs >= LINE_DIFF_DURATION_THRESHOLD_MS ||
-      matrixSize >= LINE_DIFF_MATRIX_THRESHOLD
-    ) {
-      perfLog(TOOL_CALL_DIFF_LOG_TAG, {
-        event: "line_diff",
-        durationMs: Math.round(durationMs),
-        originalLineCount: m,
-        updatedLineCount: n,
-        diffLineCount: diff.length,
-        matrixSize,
-      });
     }
   }
 

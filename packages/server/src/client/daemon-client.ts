@@ -102,13 +102,6 @@ const consoleLogger: Logger = {
   error: (obj, msg) => console.error(msg, obj),
 }
 
-function getNowMs(): number {
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-    return performance.now()
-  }
-  return Date.now()
-}
-
 export type {
   DaemonTransport,
   DaemonTransportFactory,
@@ -180,25 +173,7 @@ export type DaemonClientConfig = {
     baseDelayMs?: number
     maxDelayMs?: number
   }
-  onDiagnosticsEvent?: (event: DaemonClientDiagnosticsEvent) => void
 }
-
-export type DaemonClientDiagnosticsEvent =
-  | {
-      type: 'transport_message_timing'
-      messageType: string
-      payloadBytes: number
-      parseMs: number
-      validateMs: number
-      totalMs: number
-      outcome: 'ok' | 'parse_error' | 'validation_error'
-    }
-  | {
-      type: 'transport_binary_frame'
-      channel: BinaryMuxChannel
-      messageType: number
-      payloadBytes: number
-    }
 
 export type SendMessageOptions = {
   messageId?: string
@@ -487,14 +462,6 @@ export class DaemonClient {
         })
       },
     })
-  }
-
-  private emitDiagnosticsEvent(event: DaemonClientDiagnosticsEvent): void {
-    try {
-      this.config.onDiagnosticsEvent?.(event)
-    } catch {
-      // Diagnostics hooks must never break daemon message handling.
-    }
   }
 
   // ============================================================================
@@ -2873,7 +2840,6 @@ export class DaemonClient {
   }
 
   private handleTransportMessage(data: unknown): void {
-    const startedAtMs = getNowMs()
     const rawData =
       data && typeof data === 'object' && 'data' in data ? (data as { data: unknown }).data : data
 
@@ -2897,12 +2863,6 @@ export class DaemonClient {
     if (rawBytes) {
       const frame = decodeBinaryMuxFrame(rawBytes)
       if (frame) {
-        this.emitDiagnosticsEvent({
-          type: 'transport_binary_frame',
-          channel: frame.channel,
-          messageType: frame.messageType,
-          payloadBytes: frame.payload?.byteLength ?? 0,
-        })
         this.handleBinaryFrame(frame)
         return
       }
@@ -2913,51 +2873,18 @@ export class DaemonClient {
     }
 
     let parsedJson: unknown
-    let parseMs = 0
     try {
-      const parseStartedAtMs = getNowMs()
       parsedJson = JSON.parse(payload)
-      parseMs = getNowMs() - parseStartedAtMs
     } catch {
-      this.emitDiagnosticsEvent({
-        type: 'transport_message_timing',
-        messageType: 'unknown',
-        payloadBytes: payload.length,
-        parseMs: 0,
-        validateMs: 0,
-        totalMs: getNowMs() - startedAtMs,
-        outcome: 'parse_error',
-      })
       return
     }
 
-    const validateStartedAtMs = getNowMs()
     const parsed = WSOutboundMessageSchema.safeParse(parsedJson)
-    const validateMs = getNowMs() - validateStartedAtMs
     if (!parsed.success) {
       const msgType = (parsedJson as { type?: string })?.type ?? 'unknown'
-      this.emitDiagnosticsEvent({
-        type: 'transport_message_timing',
-        messageType: msgType,
-        payloadBytes: payload.length,
-        parseMs,
-        validateMs,
-        totalMs: getNowMs() - startedAtMs,
-        outcome: 'validation_error',
-      })
       this.logger.warn({ msgType, error: parsed.error.message }, 'Message validation failed')
       return
     }
-
-    this.emitDiagnosticsEvent({
-      type: 'transport_message_timing',
-      messageType: parsed.data.type,
-      payloadBytes: payload.length,
-      parseMs,
-      validateMs,
-      totalMs: getNowMs() - startedAtMs,
-      outcome: 'ok',
-    })
 
     if (parsed.data.type === 'pong') {
       return
@@ -3016,6 +2943,10 @@ export class DaemonClient {
         // no-op
       }
     }
+  }
+
+  setReconnectEnabled(enabled: boolean): void {
+    this.config = { ...this.config, reconnect: { ...this.config.reconnect, enabled } }
   }
 
   private scheduleReconnect(input?: {

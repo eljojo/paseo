@@ -8,7 +8,7 @@ import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { getIsTauriMac } from "@/constants/layout";
-import { useTrafficLightPadding } from "@/utils/tauri-window";
+import { useTauriDragHandlers, useTrafficLightPadding } from "@/utils/tauri-window";
 
 export function OpenProjectScreen({ serverId: _serverId }: { serverId: string }) {
   const { theme } = useUnistyles();
@@ -21,6 +21,7 @@ export function OpenProjectScreen({ serverId: _serverId }: { serverId: string })
   const isMobile = UnistylesRuntime.breakpoint === "xs" || UnistylesRuntime.breakpoint === "sm";
   const needsTrafficLightInset = !isMobile && !desktopAgentListOpen && getIsTauriMac();
   const trafficLightInset = needsTrafficLightInset ? trafficLightPadding.left : 0;
+  const dragHandlers = useTauriDragHandlers();
 
   useEffect(() => {
     if (!isMobile) {
@@ -29,7 +30,7 @@ export function OpenProjectScreen({ serverId: _serverId }: { serverId: string })
   }, [isMobile, openAgentList]);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...dragHandlers}>
       <View style={[styles.menuToggle, { paddingTop: insets.top, paddingLeft: trafficLightInset }]}>
         <SidebarMenuToggle />
       </View>
@@ -56,6 +57,7 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface0,
+    userSelect: "none",
   },
   menuToggle: {
     position: "absolute",

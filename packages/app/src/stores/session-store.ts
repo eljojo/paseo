@@ -26,7 +26,6 @@ import type {
   WorkspaceDescriptorPayload,
 } from "@server/shared/messages";
 import { normalizeWorkspaceIdentity } from "@/utils/workspace-identity";
-import { isPerfLoggingEnabled, measurePayload, perfLog } from "@/utils/perf";
 import {
   createAgentLastActivityCoalescer,
   type AgentLastActivityCommitter,
@@ -357,29 +356,7 @@ interface SessionStoreActions {
 
 type SessionStore = SessionStoreState & SessionStoreActions;
 
-const SESSION_STORE_LOG_TAG = "[SessionStore]";
-let sessionStoreUpdateCount = 0;
 const agentLastActivityCoalescer = createAgentLastActivityCoalescer();
-
-function logSessionStoreUpdate(
-  type: string,
-  serverId: string,
-  payload?: unknown
-) {
-  if (!isPerfLoggingEnabled()) {
-    return;
-  }
-  sessionStoreUpdateCount += 1;
-  const metrics = payload ? measurePayload(payload) : null;
-  perfLog(SESSION_STORE_LOG_TAG, {
-    event: type,
-    serverId,
-    updateCount: sessionStoreUpdateCount,
-    payloadApproxBytes: metrics?.approxBytes ?? 0,
-    payloadFieldCount: metrics?.fieldCount ?? 0,
-    timestamp: Date.now(),
-  });
-}
 
 // Helper to create initial session state
 function createInitialSessionState(serverId: string, client: DaemonClient, audioPlayer: ReturnType<typeof useAudioPlayer>): SessionState {
@@ -452,7 +429,6 @@ export const useSessionStore = create<SessionStore>()(
         if (prev.sessions[serverId]) {
           return prev;
         }
-        logSessionStoreUpdate("initializeSession", serverId);
         return {
           ...prev,
           sessions: {
@@ -470,7 +446,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!session) {
           return prev;
         }
-        logSessionStoreUpdate("clearSession", serverId);
         const nextSessions = { ...prev.sessions };
         delete nextSessions[serverId];
         let nextActivity = prev.agentLastActivity;
@@ -506,12 +481,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.client === client) {
           return prev;
         }
-
-        logSessionStoreUpdate("updateSessionClient", serverId, {
-          wasNull: session.client === null,
-          isNowConnected: client.isConnected,
-          isNowConnecting: client.isConnecting,
-        });
 
         return {
           ...prev,
@@ -549,12 +518,6 @@ export const useSessionStore = create<SessionStore>()(
           return prev;
         }
 
-        logSessionStoreUpdate("updateSessionServerInfo", serverId, {
-          serverId: info.serverId,
-          hostname: nextHostname,
-          version: nextVersion,
-        });
-
         return {
           ...prev,
           sessions: {
@@ -584,7 +547,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!session || session.isPlayingAudio === playing) {
           return prev;
         }
-        logSessionStoreUpdate("setIsPlayingAudio", serverId, { playing });
         return {
           ...prev,
           sessions: {
@@ -602,8 +564,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!session || session.focusedAgentId === agentId) {
           return prev;
         }
-        logSessionStoreUpdate("setFocusedAgentId", serverId, { agentId });
-
         return {
           ...prev,
           sessions: {
@@ -629,7 +589,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.messages === nextMessages) {
           return prev;
         }
-        logSessionStoreUpdate("setMessages", serverId, { count: nextMessages.length });
         return {
           ...prev,
           sessions: {
@@ -650,7 +609,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.currentAssistantMessage === nextMessage) {
           return prev;
         }
-        logSessionStoreUpdate("setCurrentAssistantMessage", serverId, { length: nextMessage.length });
         return {
           ...prev,
           sessions: {
@@ -672,7 +630,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.agentStreamTail === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setAgentStreamTail", serverId, { agentCount: nextState.size });
         return {
           ...prev,
           sessions: {
@@ -693,7 +650,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.agentStreamHead === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setAgentStreamHead", serverId, { agentCount: nextState.size });
         return {
           ...prev,
           sessions: {
@@ -745,12 +701,6 @@ export const useSessionStore = create<SessionStore>()(
           return prev;
         }
 
-        logSessionStoreUpdate("setAgentStreamState", serverId, {
-          agentId,
-          changedTail,
-          changedHead,
-        });
-
         return {
           ...prev,
           sessions: {
@@ -776,7 +726,6 @@ export const useSessionStore = create<SessionStore>()(
         }
         const nextHead = new Map(session.agentStreamHead);
         nextHead.delete(agentId);
-        logSessionStoreUpdate("clearAgentStreamHead", serverId, { agentId });
         return {
           ...prev,
           sessions: {
@@ -798,9 +747,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.agentTimelineCursor === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setAgentTimelineCursor", serverId, {
-          agentCount: nextState.size,
-        });
         return {
           ...prev,
           sessions: {
@@ -818,9 +764,6 @@ export const useSessionStore = create<SessionStore>()(
           return prev;
         }
         const nextGeneration = session.historySyncGeneration + 1;
-        logSessionStoreUpdate("bumpHistorySyncGeneration", serverId, {
-          generation: nextGeneration,
-        });
         return {
           ...prev,
           sessions: {
@@ -847,10 +790,6 @@ export const useSessionStore = create<SessionStore>()(
         }
         const nextMap = new Map(session.agentHistorySyncGeneration);
         nextMap.set(agentId, currentGeneration);
-        logSessionStoreUpdate("markAgentHistorySynchronized", serverId, {
-          agentId,
-          generation: currentGeneration,
-        });
         return {
           ...prev,
           sessions: {
@@ -884,11 +823,6 @@ export const useSessionStore = create<SessionStore>()(
           nextApplied.delete(agentId);
         }
 
-        logSessionStoreUpdate("setAgentAuthoritativeHistoryApplied", serverId, {
-          agentId,
-          applied,
-        });
-
         return {
           ...prev,
           sessions: {
@@ -913,7 +847,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.initializingAgents === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setInitializingAgents", serverId, { count: nextState.size });
         return {
           ...prev,
           sessions: {
@@ -935,7 +868,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.agents === nextAgents) {
           return prev;
         }
-        logSessionStoreUpdate("setAgents", serverId, { count: nextAgents.size });
         return {
           ...prev,
           sessions: {
@@ -957,7 +889,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.workspaces === nextWorkspaces) {
           return prev;
         }
-        logSessionStoreUpdate("setWorkspaces", serverId, { count: nextWorkspaces.size });
         return {
           ...prev,
           sessions: {
@@ -988,7 +919,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!changed) {
           return prev;
         }
-        logSessionStoreUpdate("mergeWorkspaces", serverId, { count: nextEntries.length });
         return {
           ...prev,
           sessions: {
@@ -1007,7 +937,6 @@ export const useSessionStore = create<SessionStore>()(
         }
         const next = new Map(session.workspaces);
         next.delete(workspaceId);
-        logSessionStoreUpdate("removeWorkspace", serverId, { workspaceId });
         return {
           ...prev,
           sessions: {
@@ -1074,7 +1003,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.pendingPermissions === nextPerms) {
           return prev;
         }
-        logSessionStoreUpdate("setPendingPermissions", serverId, { count: nextPerms.size });
         return {
           ...prev,
           sessions: {
@@ -1096,7 +1024,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.fileExplorer === nextState) {
           return prev;
         }
-        logSessionStoreUpdate("setFileExplorer", serverId, { agentCount: nextState.size });
         return {
           ...prev,
           sessions: {
@@ -1118,7 +1045,6 @@ export const useSessionStore = create<SessionStore>()(
         if (session.queuedMessages === nextValue) {
           return prev;
         }
-        logSessionStoreUpdate("setQueuedMessages", serverId, { agentCount: nextValue.size });
         return {
           ...prev,
           sessions: {
@@ -1136,7 +1062,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!session || session.hasHydratedAgents === hydrated) {
           return prev;
         }
-        logSessionStoreUpdate("setHasHydratedAgents", serverId, { hydrated });
         return {
           ...prev,
           sessions: {
@@ -1153,7 +1078,6 @@ export const useSessionStore = create<SessionStore>()(
         if (!session || session.hasHydratedWorkspaces === hydrated) {
           return prev;
         }
-        logSessionStoreUpdate("setHasHydratedWorkspaces", serverId, { hydrated });
         return {
           ...prev,
           sessions: {

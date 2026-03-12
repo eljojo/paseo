@@ -68,7 +68,6 @@ import {
   buildToolCallDisplayModel,
 } from "@/utils/tool-call-display";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
-import { getNowMs, isPerfLoggingEnabled, perfLog } from "@/utils/perf";
 import { parseInlinePathToken, type InlinePathTarget } from "@/utils/inline-path";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -1786,10 +1785,6 @@ interface ToolCallProps {
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
 }
 
-const TOOL_CALL_LOG_TAG = "[ToolCall]";
-const TOOL_CALL_COMMIT_THRESHOLD_MS = 16;
-
-
 export const ToolCall = memo(function ToolCall({
   toolName,
   args,
@@ -1806,7 +1801,6 @@ export const ToolCall = memo(function ToolCall({
 }: ToolCallProps) {
   const { openToolCall } = useToolCallSheet();
   const [isExpanded, setIsExpanded] = useState(false);
-  const toggleStartRef = useRef<number | null>(null);
 
   // Check if we're on mobile (use bottom sheet) or desktop (inline expand)
   const isMobile =
@@ -1849,7 +1843,6 @@ export const ToolCall = memo(function ToolCall({
   const displayName = displayModel.displayName;
   const summary = displayModel.summary;
   const errorText = displayModel.errorText;
-  const iconCategory = effectiveDetail?.type ?? toolName.trim().toLowerCase();
   const IconComponent = resolveToolCallIcon(toolName, effectiveDetail);
 
   // Check if there's any content to display
@@ -1862,9 +1855,6 @@ export const ToolCall = memo(function ToolCall({
       : false);
 
   const handleToggle = useCallback(() => {
-    if (!isMobile && isPerfLoggingEnabled()) {
-      toggleStartRef.current = getNowMs();
-    }
     if (isMobile) {
       openToolCall({
         toolName,
@@ -1877,33 +1867,6 @@ export const ToolCall = memo(function ToolCall({
       setIsExpanded((prev) => !prev);
     }
   }, [isMobile, openToolCall, toolName, displayName, summary, effectiveDetail, errorText]);
-
-  useEffect(() => {
-    if (isMobile || !isPerfLoggingEnabled()) {
-      return;
-    }
-    const startMs = toggleStartRef.current;
-    if (startMs === null) {
-      return;
-    }
-    toggleStartRef.current = null;
-    const logCommit = () => {
-      const durationMs = getNowMs() - startMs;
-      if (durationMs >= TOOL_CALL_COMMIT_THRESHOLD_MS) {
-        perfLog(TOOL_CALL_LOG_TAG, {
-          event: isExpanded ? "expand_commit" : "collapse_commit",
-          toolName,
-          iconCategory,
-          durationMs: Math.round(durationMs),
-        });
-      }
-    };
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => logCommit());
-    } else {
-      logCommit();
-    }
-  }, [isExpanded, isMobile, toolName, iconCategory]);
 
   useEffect(() => {
     if (!onInlineDetailsHoverChange || isMobile || isExpanded) {

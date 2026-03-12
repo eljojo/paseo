@@ -56,6 +56,7 @@ export async function buildClientConfig(
     clientId,
     clientType: "mobile" as const,
     suppressSendErrors: true,
+    reconnect: { enabled: false },
     ...(connection.type === "directSocket" || connection.type === "directPipe"
       ? localTransportFactory
         ? { transportFactory: localTransportFactory }

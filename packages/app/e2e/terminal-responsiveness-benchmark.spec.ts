@@ -175,29 +175,6 @@ test("workspace terminal responsiveness benchmark (report-only, single stress pr
       timeout: 120_000,
     }).toBe(true);
 
-    const diagnostics = await page.evaluate(async () => {
-      const debug = (
-        window as {
-          __PASEO_PERF_DIAGNOSTICS_DEBUG__?: {
-            consumeReports?: () => Promise<unknown[]>;
-          };
-        }
-      ).__PASEO_PERF_DIAGNOSTICS_DEBUG__;
-      if (!debug || typeof debug.consumeReports !== "function") {
-        return { available: false, reports: [] as unknown[] };
-      }
-      try {
-        const reports = await debug.consumeReports();
-        return { available: true, reports: Array.isArray(reports) ? reports : [] };
-      } catch (error) {
-        return {
-          available: true,
-          reports: [] as unknown[],
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    });
-
     const frameGapsMs = (rafResult.samples ?? []).filter(
       (sample) => Number.isFinite(sample) && sample > 0
     );
@@ -220,12 +197,6 @@ test("workspace terminal responsiveness benchmark (report-only, single stress pr
         over500Ms: frameGapsMs.filter((gap) => gap > 500).length,
       },
       explorerToggleLatencyMs: summarize(interactionLatenciesMs),
-      diagnostics: {
-        available: diagnostics.available,
-        reportCount: diagnostics.reports.length,
-        reports: diagnostics.reports,
-        error: "error" in diagnostics ? diagnostics.error : undefined,
-      },
     };
 
     await testInfo.attach("terminal-responsiveness-report", {

@@ -64,7 +64,6 @@ import {
   parseWorkspaceOpenIntent,
 } from "@/utils/host-routes";
 import { getTauri } from "@/utils/tauri";
-import { PerfDiagnosticsProvider } from "@/runtime/perf-diagnostics";
 import { attachConsole } from "@/utils/tauri-attach-console";
 
 polyfillCrypto();
@@ -556,55 +555,53 @@ export default function RootLayout() {
     <GestureHandlerRootView
       style={{ flex: 1, backgroundColor: darkTheme.colors.surface0 }}
     >
-      <PerfDiagnosticsProvider scope="root_layout">
-        <PortalProvider>
-          <SafeAreaProvider>
-            <KeyboardProvider>
-              <BottomSheetModalProvider>
-                <QueryProvider>
-                  <HostRuntimeBootstrapProvider>
-                    <PushNotificationRouter />
-                    <HostSessionManager />
-                    <ProvidersWrapper>
-                      <SidebarAnimationProvider>
-                        <HorizontalScrollProvider>
-                          <ToastProvider>
-                            <AppWithSidebar>
-                              <Stack
-                                screenOptions={{
-                                  headerShown: false,
-                                  animation: "none",
-                                  contentStyle: {
-                                    backgroundColor: darkTheme.colors.surface0,
-                                  },
-                                }}
-                              >
-                                <Stack.Screen name="index" />
-                                <Stack.Screen name="settings" />
-                                <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
-                                <Stack.Screen
-                                  name="h/[serverId]/agent/[agentId]"
-                                  options={{ gestureEnabled: false }}
-                                />
-                                <Stack.Screen name="h/[serverId]/index" />
-                                <Stack.Screen name="h/[serverId]/agents" />
-                                <Stack.Screen name="h/[serverId]/new-agent" />
-                                <Stack.Screen name="h/[serverId]/open-project" />
-                                <Stack.Screen name="h/[serverId]/settings" />
-                                <Stack.Screen name="pair-scan" />
-                              </Stack>
-                            </AppWithSidebar>
-                          </ToastProvider>
-                        </HorizontalScrollProvider>
-                      </SidebarAnimationProvider>
-                    </ProvidersWrapper>
-                  </HostRuntimeBootstrapProvider>
-                </QueryProvider>
-              </BottomSheetModalProvider>
-            </KeyboardProvider>
-          </SafeAreaProvider>
-        </PortalProvider>
-      </PerfDiagnosticsProvider>
+      <PortalProvider>
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <BottomSheetModalProvider>
+              <QueryProvider>
+                <HostRuntimeBootstrapProvider>
+                  <PushNotificationRouter />
+                  <HostSessionManager />
+                  <ProvidersWrapper>
+                    <SidebarAnimationProvider>
+                      <HorizontalScrollProvider>
+                        <ToastProvider>
+                          <AppWithSidebar>
+                            <Stack
+                              screenOptions={{
+                                headerShown: false,
+                                animation: "none",
+                                contentStyle: {
+                                  backgroundColor: darkTheme.colors.surface0,
+                                },
+                              }}
+                            >
+                              <Stack.Screen name="index" />
+                              <Stack.Screen name="settings" />
+                              <Stack.Screen name="h/[serverId]/workspace/[workspaceId]" />
+                              <Stack.Screen
+                                name="h/[serverId]/agent/[agentId]"
+                                options={{ gestureEnabled: false }}
+                              />
+                              <Stack.Screen name="h/[serverId]/index" />
+                              <Stack.Screen name="h/[serverId]/agents" />
+                              <Stack.Screen name="h/[serverId]/new-agent" />
+                              <Stack.Screen name="h/[serverId]/open-project" />
+                              <Stack.Screen name="h/[serverId]/settings" />
+                              <Stack.Screen name="pair-scan" />
+                            </Stack>
+                          </AppWithSidebar>
+                        </ToastProvider>
+                      </HorizontalScrollProvider>
+                    </SidebarAnimationProvider>
+                  </ProvidersWrapper>
+                </HostRuntimeBootstrapProvider>
+              </QueryProvider>
+            </BottomSheetModalProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </PortalProvider>
     </GestureHandlerRootView>
   );
 }

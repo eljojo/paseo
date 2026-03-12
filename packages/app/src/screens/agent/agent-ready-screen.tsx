@@ -31,11 +31,6 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/contexts/session-context";
 import type { StreamItem } from "@/types/stream";
 import {
-  buildAgentNavigationKey,
-  endNavigationTiming,
-} from "@/utils/navigation-timing";
-import { startPerfMonitor } from "@/utils/perf-monitor";
-import {
   checkoutStatusQueryKey,
   type CheckoutStatusPayload,
   useCheckoutStatusQuery,
@@ -114,27 +109,6 @@ export function AgentReadyScreen({
     (isUnknownDaemon ? "offline" : "connecting");
   const lastConnectionError = runtimeSnapshot?.lastError ?? null;
   const isRuntimeSessionAvailable = Boolean(resolvedServerId && runtimeClient);
-
-  const focusServerId = resolvedServerId;
-  const navigationStatus = isRuntimeSessionAvailable
-    ? "ready"
-    : "session_unavailable";
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!resolvedAgentId || !focusServerId) {
-        return;
-      }
-      const navigationKey = buildAgentNavigationKey(
-        focusServerId,
-        resolvedAgentId
-      );
-      endNavigationTiming(navigationKey, {
-        screen: "agent",
-        status: navigationStatus,
-      });
-    }, [focusServerId, navigationStatus, resolvedAgentId])
-  );
 
   if (!resolvedServerId || !runtimeClient) {
     return (
@@ -294,15 +268,6 @@ function AgentScreenContent({
     }
     openFileExplorer();
   }, [activateExplorerTabForCheckout, openFileExplorer, resolveCurrentExplorerCheckout]);
-  useEffect(() => {
-    if (Platform.OS !== "web") {
-      return;
-    }
-    const scope = `agent:${serverId}:${agentId ?? "unknown"}`;
-    const stop = startPerfMonitor(scope);
-    return stop;
-  }, [serverId, agentId]);
-
   // Swipe-left gesture to open explorer sidebar on mobile
   const explorerOpenGesture = useExplorerOpenGesture({
     enabled: isMobile && mobileView === "agent",

@@ -16,7 +16,6 @@ import { shortenPath } from '@/utils/shorten-path'
 import { type AggregatedAgent } from '@/hooks/use-aggregated-agents'
 import { useSessionStore } from '@/stores/session-store'
 import { AgentStatusDot } from '@/components/agent-status-dot'
-import { buildAgentNavigationKey, startNavigationTiming } from '@/utils/navigation-timing'
 import { buildHostWorkspaceAgentRoute } from '@/utils/host-routes'
 
 interface AgentListProps {
@@ -271,13 +270,6 @@ export function AgentList({
 
       const serverId = agent.serverId
       const agentId = agent.id
-      const navigationKey = buildAgentNavigationKey(serverId, agentId)
-      startNavigationTiming(navigationKey, {
-        from: 'home',
-        to: 'agent',
-        params: { serverId, agentId },
-      })
-
       const shouldReplace = pathname.startsWith('/h/')
       const navigate = shouldReplace ? router.replace : router.push
 

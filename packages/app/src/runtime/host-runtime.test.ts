@@ -76,6 +76,8 @@ class FakeDaemonClient {
     return { rttMs: 0 };
   }
 
+  setReconnectEnabled(_enabled: boolean): void {}
+
   setConnectionState(next: ConnectionState): void {
     this.state = next;
     if (next.status === "disconnected") {
