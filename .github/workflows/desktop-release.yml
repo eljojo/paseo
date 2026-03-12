@@ -136,6 +136,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Patch Metro loader for Windows absolute paths
+        shell: pwsh
+        run: |
+          $patchPath = (Get-Item "$env:GITHUB_WORKSPACE/scripts/metro-config-windows-loader-patch.cjs").FullName
+          "NODE_OPTIONS=--require=$patchPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build web app for Tauri
         run: npm run build:web --workspace=@getpaseo/app
 
@@ -371,15 +377,41 @@ jobs:
 
       - name: Build Linux Tauri release
         if: env.IS_SMOKE_TAG != 'true'
+        id: linux_tauri
+        continue-on-error: true
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          NO_STRIP: "true"
+          NO_STRIP: "1"
           APPIMAGE_EXTRACT_AND_RUN: "1"
         shell: bash
         run: |
           set -euo pipefail
           npm run tauri --workspace=@getpaseo/desktop build -- --bundles appimage
+
+      - name: Inspect failed Linux AppImage build
+        if: env.IS_SMOKE_TAG != 'true' && steps.linux_tauri.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          appimage_dir="packages/desktop/src-tauri/target/release/bundle/appimage"
+          ls -R "$appimage_dir" || true
+          script_path="$(find "$appimage_dir" -maxdepth 2 -type f -name 'build_appimage.sh' | head -n 1)"
+          if [ -z "$script_path" ]; then
+            echo "::error::build_appimage.sh was not generated"
+            exit 1
+          fi
+          sed -n '1,240p' "$script_path"
+          env | sort | grep -E '^(APPIMAGE|DESKTOP_VERSION|NO_STRIP|RELEASE_TAG|SOURCE_TAG|TAURI_)' || true
+          (
+            cd "$(dirname "$script_path")"
+            bash -x "./$(basename "$script_path")"
+          ) || true
+
+      - name: Fail Linux release when AppImage bundling fails
+        if: env.IS_SMOKE_TAG != 'true' && steps.linux_tauri.outcome == 'failure'
+        shell: bash
+        run: exit 1
 
       - name: Upload Linux release assets
         if: env.IS_SMOKE_TAG != 'true'
