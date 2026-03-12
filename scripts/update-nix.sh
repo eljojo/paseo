@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Fix workspace-local lockfile entries and update the Nix dependency hash.
+# Requires: node, npm, nix (with prefetch-npm-deps from nixpkgs)
+#
+# Usage:
+#   ./scripts/update-nix.sh          # fix lockfile + update hash
+#   ./scripts/update-nix.sh --check  # verify everything is up to date (CI mode)
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+LOCK_FILE="$ROOT_DIR/package-lock.json"
+PACKAGE_NIX="$ROOT_DIR/nix/package.nix"
+
+CHECK_MODE=false
+if [[ "${1:-}" == "--check" ]]; then
+  CHECK_MODE=true
+fi
+
+# 1. Fix lockfile (add resolved/integrity for workspace-local entries)
+echo "Fixing lockfile..."
+node "$SCRIPT_DIR/fix-lockfile.mjs" "$LOCK_FILE"
+
+# 2. Prefetch deps and compute hash
+echo "Prefetching npm dependencies..."
+TMPDIR_DEPS="$(mktemp -d)"
+trap "rm -rf $TMPDIR_DEPS" EXIT
+
+prefetch-npm-deps "$LOCK_FILE" "$TMPDIR_DEPS/deps" 2>/dev/null
+NEW_HASH="$(nix hash path "$TMPDIR_DEPS/deps")"
+echo "Computed hash: $NEW_HASH"
+
+# 3. Read current hash
+CURRENT_HASH="$(grep 'npmDepsHash' "$PACKAGE_NIX" | sed 's/.*"\(.*\)".*/\1/')"
+
+if [[ "$NEW_HASH" == "$CURRENT_HASH" ]]; then
+  echo "Hash is already up to date."
+else
+  if $CHECK_MODE; then
+    echo "ERROR: npmDepsHash is stale."
+    echo "  current: $CURRENT_HASH"
+    echo "  correct: $NEW_HASH"
+    echo "Run ./scripts/update-nix.sh to fix."
+    exit 1
+  fi
+
+  echo "Updating npmDepsHash in nix/package.nix..."
+  sed -i.bak "s|npmDepsHash = \".*\"|npmDepsHash = \"$NEW_HASH\"|" "$PACKAGE_NIX"
+  rm -f "$PACKAGE_NIX.bak"
+  echo "Updated: $CURRENT_HASH -> $NEW_HASH"
+fi
