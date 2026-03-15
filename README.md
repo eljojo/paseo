@@ -21,7 +21,7 @@ Run agents in parallel on your own machines. Ship from your phone or your desk.
 
 ## Getting Started
 
-Download the desktop app from [paseo.sh](https://paseo.sh) — it bundles the daemon so there's nothing else to install.
+Download the desktop app from [paseo.sh](https://paseo.sh) or the [GitHub releases page](https://github.com/getpaseo/paseo/releases) — it bundles the daemon so there's nothing else to install.
 
 ### Headless / server mode
 
