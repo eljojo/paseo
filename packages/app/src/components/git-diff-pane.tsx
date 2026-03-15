@@ -48,18 +48,18 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
+  buildGitActions,
+  type GitActions,
+} from "@/components/git-actions-policy";
+import {
   WebDesktopScrollbarOverlay,
   useWebDesktopScrollbarMetrics,
 } from "@/components/web-desktop-scrollbar";
 import { buildNewAgentRoute, resolveNewAgentWorkingDir } from "@/utils/new-agent-routing";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { shouldShowMergeFromBaseAction } from "./git-action-visibility";
-
-import { type GitActionId, type GitAction, type GitActions } from "@/hooks/use-git-actions";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
 
-// Re-export types from shared hook
-export type { GitActionId, GitAction, GitActions } from "@/hooks/use-git-actions";
+export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
 function openURLInNewTab(url: string): void {
   void openExternalUrl(url);
@@ -790,19 +790,13 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   const commitDisabled = actionsDisabled || commitStatus === "pending";
   const prDisabled = actionsDisabled || prCreateStatus === "pending";
   const mergeDisabled =
-    actionsDisabled || mergeStatus === "pending" || hasUncommittedChanges || !baseRef;
+    actionsDisabled || mergeStatus === "pending";
   const mergeFromBaseDisabled =
-    actionsDisabled ||
-    mergeFromBaseStatus === "pending" ||
-    hasUncommittedChanges ||
-    !baseRef ||
-    (isOnBaseBranch && !hasRemote);
+    actionsDisabled || mergeFromBaseStatus === "pending";
   const pushDisabled =
-    actionsDisabled || pushStatus === "pending" || !(gitStatus?.hasRemote ?? false);
+    actionsDisabled || pushStatus === "pending";
   const archiveDisabled =
-    actionsDisabled ||
-    archiveStatus === "pending" ||
-    !gitStatus?.isPaseoOwnedWorktree;
+    actionsDisabled || archiveStatus === "pending";
 
   let bodyContent: ReactElement;
 
@@ -892,184 +886,67 @@ export function GitDiffPane({ serverId, workspaceId, cwd, hideHeaderRow }: GitDi
   // ==========================================================================
 
   const gitActions: GitActions = useMemo(() => {
-    if (!isGit) {
-      return { primary: null, secondary: [], menu: [] };
-    }
-
-    // Build all possible actions
-    const allActions = new Map<GitActionId, GitAction>();
-
-    // Commit - always available
-    allActions.set("commit", {
-      id: "commit",
-      label: "Commit",
-      pendingLabel: "Committing...",
-      successLabel: "Committed",
-      disabled: commitDisabled,
-      status: commitStatus,
-      icon: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
-      handler: handleCommit,
+    return buildGitActions({
+      isGit,
+      githubFeaturesEnabled,
+      hasPullRequest,
+      pullRequestUrl: prStatus?.url ?? null,
+      hasRemote,
+      isPaseoOwnedWorktree,
+      isOnBaseBranch,
+      hasUncommittedChanges,
+      baseRefAvailable: Boolean(baseRef),
+      baseRefLabel,
+      aheadCount,
+      aheadOfOrigin,
+      behindOfOrigin,
+      shouldPromoteArchive,
+      shipDefault,
+      runtime: {
+        commit: {
+          disabled: commitDisabled,
+          status: commitStatus,
+          icon: <GitCommitHorizontal size={16} color={theme.colors.foregroundMuted} />,
+          handler: handleCommit,
+        },
+        push: {
+          disabled: pushDisabled,
+          status: pushStatus,
+          icon: <Upload size={16} color={theme.colors.foregroundMuted} />,
+          handler: handlePush,
+        },
+        pr: {
+          disabled: prDisabled,
+          status: hasPullRequest ? "idle" : prCreateStatus,
+          icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
+          handler: () => {
+            if (prStatus?.url) {
+              openURLInNewTab(prStatus.url);
+              return;
+            }
+            handleCreatePr();
+          },
+        },
+        "merge-branch": {
+          disabled: mergeDisabled,
+          status: mergeStatus,
+          icon: <GitMerge size={16} color={theme.colors.foregroundMuted} />,
+          handler: handleMergeBranch,
+        },
+        "merge-from-base": {
+          disabled: mergeFromBaseDisabled,
+          status: mergeFromBaseStatus,
+          icon: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
+          handler: handleMergeFromBase,
+        },
+        "archive-worktree": {
+          disabled: archiveDisabled,
+          status: archiveStatus,
+          icon: <Archive size={16} color={theme.colors.foregroundMuted} />,
+          handler: handleArchiveWorktree,
+        },
+      },
     });
-
-    // Push - when has remote
-    if (hasRemote) {
-      allActions.set("push", {
-        id: "push",
-        label: "Push",
-        pendingLabel: "Pushing...",
-        successLabel: "Pushed",
-        disabled: pushDisabled,
-        status: pushStatus,
-        description: !hasRemote ? "No remote configured" : undefined,
-        icon: <Upload size={16} color={theme.colors.foregroundMuted} />,
-        handler: handlePush,
-      });
-    }
-
-    // View PR - when PR exists
-    if (githubFeaturesEnabled && hasPullRequest && prStatus?.url) {
-      const prUrl = prStatus.url;
-      allActions.set("view-pr", {
-        id: "view-pr",
-        label: "View PR",
-        pendingLabel: "View PR",
-        successLabel: "View PR",
-        disabled: false,
-        status: "idle",
-        icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
-        handler: () => openURLInNewTab(prUrl),
-      });
-    }
-
-    // Create PR - when ahead of base and no PR
-    if (githubFeaturesEnabled && aheadCount > 0 && !hasPullRequest) {
-      allActions.set("create-pr", {
-        id: "create-pr",
-        label: "Create PR",
-        pendingLabel: "Creating PR...",
-        successLabel: "PR Created",
-        disabled: prDisabled,
-        status: prCreateStatus,
-        icon: <GitHubIcon size={16} color={theme.colors.foregroundMuted} />,
-        handler: handleCreatePr,
-      });
-    }
-
-    // Merge branch - when ahead of base
-    if (aheadCount > 0) {
-      allActions.set("merge-branch", {
-        id: "merge-branch",
-        label: `Merge into ${baseRefLabel}`,
-        pendingLabel: "Merging...",
-        successLabel: "Merged",
-        disabled: mergeDisabled,
-        status: mergeStatus,
-        description: hasUncommittedChanges ? "Requires clean working tree" : undefined,
-        icon: <GitMerge size={16} color={theme.colors.foregroundMuted} />,
-        handler: handleMergeBranch,
-      });
-    }
-
-    // Update/sync from base
-    if (
-      shouldShowMergeFromBaseAction({
-        isOnBaseBranch,
-        hasRemote,
-        aheadOfOrigin,
-        behindOfOrigin,
-      })
-    ) {
-      allActions.set("merge-from-base", {
-        id: "merge-from-base",
-        label: isOnBaseBranch ? "Sync" : `Update from ${baseRefLabel}`,
-        pendingLabel: "Updating...",
-        successLabel: "Updated",
-        disabled: mergeFromBaseDisabled,
-        status: mergeFromBaseStatus,
-        description:
-          hasUncommittedChanges
-            ? "Requires clean working tree"
-            : isOnBaseBranch && !hasRemote
-              ? "No remote configured"
-              : undefined,
-        icon: <RefreshCcw size={16} color={theme.colors.foregroundMuted} />,
-        handler: handleMergeFromBase,
-      });
-    }
-
-    // Archive worktree - only for Paseo worktrees
-    if (isPaseoOwnedWorktree) {
-      allActions.set("archive-worktree", {
-        id: "archive-worktree",
-        label: "Archive worktree",
-        pendingLabel: "Archiving...",
-        successLabel: "Archived",
-        disabled: archiveDisabled,
-        status: archiveStatus,
-        icon: <Archive size={16} color={theme.colors.foregroundMuted} />,
-        handler: handleArchiveWorktree,
-      });
-    }
-
-    // Select primary action (priority rules)
-    let primaryActionId: GitActionId | null = null;
-
-    // Rule 0: Post-ship in worktree -> Archive
-    if (shouldPromoteArchive && allActions.has("archive-worktree")) {
-      primaryActionId = "archive-worktree";
-    }
-    // Rule 1: Uncommitted changes → Commit
-    else if (hasUncommittedChanges) {
-      primaryActionId = "commit";
-    }
-    // Rule 2: Ahead of origin → Push
-    else if (aheadOfOrigin > 0 && allActions.has("push")) {
-      primaryActionId = "push";
-    }
-    // Rule 3: Has PR → View PR
-    else if (hasPullRequest) {
-      primaryActionId = "view-pr";
-    }
-    // Rule 4: On base branch -> surface sync explicitly
-    else if (isOnBaseBranch && allActions.has("merge-from-base")) {
-      primaryActionId = "merge-from-base";
-    }
-    // Rule 5: Ahead of base → Ship action based on preference
-    else if (aheadCount > 0) {
-      const preferred: GitActionId = shipDefault === "merge" ? "merge-branch" : "create-pr";
-      const fallback: GitActionId = shipDefault === "merge" ? "create-pr" : "merge-branch";
-
-      const preferredAction = allActions.get(preferred);
-      const fallbackAction = allActions.get(fallback);
-
-      if (preferredAction && !preferredAction.disabled) {
-        primaryActionId = preferred;
-      } else if (fallbackAction && !fallbackAction.disabled) {
-        primaryActionId = fallback;
-      } else if (preferredAction) {
-        primaryActionId = preferred;
-      }
-    }
-
-    const primary = primaryActionId ? allActions.get(primaryActionId) ?? null : null;
-
-    // Secondary actions: ship-related + merge from base + push (excluding primary)
-    const secondaryIds: GitActionId[] = [
-      "merge-branch",
-      "create-pr",
-      "view-pr",
-      "merge-from-base",
-      "push",
-      "archive-worktree",
-    ];
-    const secondary = secondaryIds
-      .filter(id => id !== primaryActionId && allActions.has(id))
-      .map(id => allActions.get(id)!);
-
-    // Menu actions: none for now (all actionable items are in primary/secondary)
-    const menu: GitAction[] = [];
-
-    return { primary, secondary, menu };
   }, [
     isGit, hasRemote, hasPullRequest, prStatus?.url, aheadCount, isPaseoOwnedWorktree, isOnBaseBranch, githubFeaturesEnabled,
     hasUncommittedChanges, aheadOfOrigin, behindOfOrigin, shipDefault, baseRefLabel, shouldPromoteArchive,

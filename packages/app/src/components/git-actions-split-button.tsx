@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { GitAction, GitActions } from "@/hooks/use-git-actions";
+import type { GitAction, GitActions } from "@/components/git-actions-policy";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
@@ -79,7 +79,11 @@ export function GitActionsSplitButton({ gitActions }: GitActionsSplitButtonProps
                         status={action.status}
                         pendingLabel={action.pendingLabel}
                         successLabel={action.successLabel}
-                        closeOnSelect={action.status === "idle" && action.id === "view-pr"}
+                        closeOnSelect={
+                          action.status === "idle" &&
+                          action.id === "pr" &&
+                          action.label === "View PR"
+                        }
                         description={action.description}
                         onSelect={action.handler}
                       >
