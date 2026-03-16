@@ -42,10 +42,13 @@ jobs:
         run: nix build .#default -o result
 
       - name: Verify lockfile is complete
+        # npm silently omits resolved/integrity fields in workspace monorepos.
+        # Nix needs them for offline builds. See https://github.com/npm/cli/issues/4460
         run: |
           node scripts/fix-lockfile.mjs package-lock.json
           git diff --exit-code package-lock.json || {
             echo "ERROR: package-lock.json has missing resolved/integrity fields."
+            echo "This is a known npm bug: https://github.com/npm/cli/issues/4460"
             echo "Run 'node scripts/fix-lockfile.mjs' and commit the result."
             exit 1
           }

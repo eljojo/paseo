@@ -18,6 +18,7 @@ if [[ "${1:-}" == "--check" ]]; then
 fi
 
 # 1. Fix lockfile (add resolved/integrity for workspace-local entries)
+#    Workaround for https://github.com/npm/cli/issues/4460
 echo "Fixing lockfile..."
 node "$SCRIPT_DIR/fix-lockfile.mjs" "$LOCK_FILE"
 

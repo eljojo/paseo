@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-// Ensure all workspace-local node_modules entries in package-lock.json have
-// `resolved` and `integrity` fields. npm omits these for workspace-hoisted
-// overrides, but tools like Nix's offline `npm ci` require them.
+// Workaround for https://github.com/npm/cli/issues/4460
 //
-// This script is idempotent — running it on an already-complete lockfile
-// is a no-op. Run it after `npm install` when the lockfile changes.
+// npm silently omits `resolved` and `integrity` fields from some
+// package-lock.json entries in workspace monorepos (especially for
+// workspace-hoisted packages). npm acknowledged this as a bug in 2022
+// but has never shipped a fix.
+//
+// This is harmless for regular `npm ci`, but breaks offline installers
+// like Nix that need every entry to have a resolved URL + integrity hash
+// so they can pre-fetch all tarballs in a sandbox with no network access.
+//
+// This script finds incomplete entries and fills them in using `npm view`.
+// It's idempotent — running it on an already-complete lockfile is a no-op.
+//
+// See also: https://github.com/npm/cli/issues/4263
+//           https://github.com/npm/cli/issues/6301
 //
 // Usage:
 //   node scripts/fix-lockfile.mjs
