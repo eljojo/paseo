@@ -1723,7 +1723,7 @@ export class Session {
             payload: {
               requestId,
               requestType: msg.type,
-              error: 'Request failed',
+              error: `Request failed: ${err.message}`,
               code: 'handler_error',
             },
           })

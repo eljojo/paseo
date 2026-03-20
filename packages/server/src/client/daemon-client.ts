@@ -328,7 +328,10 @@ class DaemonRpcError extends Error {
   readonly code?: string
 
   constructor(params: { requestId: string; error: string; requestType?: string; code?: string }) {
-    super(params.error)
+    const parts = [params.error]
+    if (params.requestType) parts.push(`requestType=${params.requestType}`)
+    if (params.code) parts.push(`code=${params.code}`)
+    super(parts.join(' '))
     this.name = 'DaemonRpcError'
     this.requestId = params.requestId
     this.requestType = params.requestType
