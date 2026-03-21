@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fix workspace-local lockfile entries and update the Nix dependency hash.
-# Requires: node, npm, nix (with prefetch-npm-deps from nixpkgs)
+# Requires: node, npm, nix
 #
 # Usage:
 #   ./scripts/update-nix.sh          # fix lockfile + update hash
@@ -24,11 +24,22 @@ node "$SCRIPT_DIR/fix-lockfile.mjs" "$LOCK_FILE"
 
 # 2. Prefetch deps and compute hash
 echo "Prefetching npm dependencies..."
-TMPDIR_DEPS="$(mktemp -d)"
-trap "rm -rf $TMPDIR_DEPS" EXIT
 
-prefetch-npm-deps "$LOCK_FILE" "$TMPDIR_DEPS/deps" 2>/dev/null
-NEW_HASH="$(nix hash path "$TMPDIR_DEPS/deps")"
+# Resolve prefetch-npm-deps from the same nixpkgs pinned in flake.lock
+NIXPKGS_URL="$(node -p "
+  const l = JSON.parse(require('fs').readFileSync('$ROOT_DIR/flake.lock', 'utf8'));
+  const n = l.nodes.nixpkgs.locked;
+  'github:' + n.owner + '/' + n.repo + '/' + n.rev;
+")"
+
+STDERR_LOG="$(mktemp)"
+trap "rm -f '$STDERR_LOG'" EXIT
+
+if ! NEW_HASH="$(nix shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-deps "$LOCK_FILE" 2>"$STDERR_LOG")"; then
+  echo "ERROR: prefetch-npm-deps failed:" >&2
+  tail -20 "$STDERR_LOG" >&2
+  exit 1
+fi
 echo "Computed hash: $NEW_HASH"
 
 # 3. Read current hash
