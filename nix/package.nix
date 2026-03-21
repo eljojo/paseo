@@ -70,10 +70,8 @@ buildNpmPackage rec {
     # degrade when unavailable.
     npm rebuild node-pty
 
-    # Build the daemon packages (relay → server → cli)
-    npm run build --workspace=@getpaseo/relay
-    npm run build --workspace=@getpaseo/server
-    npm run build --workspace=@getpaseo/cli
+    # Build all daemon packages in dependency order (defined in package.json)
+    npm run build:daemon
 
     runHook postBuild
   '';
@@ -89,25 +87,19 @@ buildNpmPackage rec {
     # Copy node_modules (preserving workspace symlinks)
     cp -a node_modules $out/lib/paseo/
 
-    # Remove all @getpaseo workspace symlinks except the daemon packages we need
+    # Auto-detect which @getpaseo/* packages were built by build:daemon
+    # (they'll have a dist/ directory). Copy those and remove the rest.
     for link in $out/lib/paseo/node_modules/@getpaseo/*; do
       name=$(basename "$link")
-      case "$name" in
-        relay|server|cli) ;; # keep these
-        *) rm -f "$link" ;;
-      esac
-    done
-
-    # Copy built daemon workspace packages
-    for pkg in relay server cli; do
-      mkdir -p $out/lib/paseo/packages/$pkg
-      cp packages/$pkg/package.json $out/lib/paseo/packages/$pkg/
-      if [ -d packages/$pkg/dist ]; then
-        cp -a packages/$pkg/dist $out/lib/paseo/packages/$pkg/
-      fi
-      # Copy workspace-local node_modules if present
-      if [ -d packages/$pkg/node_modules ]; then
-        cp -a packages/$pkg/node_modules $out/lib/paseo/packages/$pkg/
+      if [ -d "packages/$name/dist" ]; then
+        mkdir -p "$out/lib/paseo/packages/$name"
+        cp "packages/$name/package.json" "$out/lib/paseo/packages/$name/"
+        cp -a "packages/$name/dist" "$out/lib/paseo/packages/$name/"
+        if [ -d "packages/$name/node_modules" ]; then
+          cp -a "packages/$name/node_modules" "$out/lib/paseo/packages/$name/"
+        fi
+      else
+        rm -f "$link"
       fi
     done
 
