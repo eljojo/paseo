@@ -85,7 +85,11 @@ export function parseCliPassthroughArgsFromArgv(argv: string[]): string[] | null
   const startIndex = process.defaultApp ? 2 : 1;
   const effective = argv
     .slice(startIndex)
-    .filter((arg) => !arg.startsWith(IGNORED_GUI_LAUNCH_ARG_PREFIX));
+    .filter(
+      (arg) =>
+        !arg.startsWith(IGNORED_GUI_LAUNCH_ARG_PREFIX) &&
+        !arg.startsWith("--"),
+    );
 
   return effective.length > 0 ? effective : null;
 }
