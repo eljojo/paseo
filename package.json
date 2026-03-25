@@ -68,6 +68,7 @@
     "typescript": "^5.9.3"
   },
   "description": "Paseo: voice-controlled development environment with OpenAI Realtime API",
+  "homepage": "https://paseo.sh",
   "keywords": [
     "openai",
     "realtime",
@@ -76,7 +77,14 @@
     "development",
     "mcp"
   ],
-  "author": "moboudra",
+  "author": {
+    "name": "Mohamed Boudra",
+    "email": "boudra.moha@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/getpaseo/paseo.git"
+  },
   "license": "AGPL-3.0-or-later",
   "overrides": {
     "lightningcss": "1.30.1",

@@ -9,6 +9,12 @@ const rootPackagePath = path.join(rootDir, "package.json");
 const rootPackage = JSON.parse(readFileSync(rootPackagePath, "utf8"));
 const rootVersion = rootPackage.version;
 const workspacePaths = Array.isArray(rootPackage.workspaces) ? rootPackage.workspaces : [];
+const sharedMetadata = {
+  homepage: rootPackage.homepage,
+  repository: rootPackage.repository,
+  author: rootPackage.author,
+  license: rootPackage.license,
+};
 
 if (typeof rootVersion !== "string" || rootVersion.length === 0) {
   throw new Error('Root package.json must contain a valid "version"');
@@ -35,6 +41,17 @@ for (const workspacePath of workspacePaths) {
   if (pkg.version !== rootVersion) {
     pkg.version = rootVersion;
     changed = true;
+  }
+
+  if (pkg.name === "@getpaseo/desktop") {
+    for (const [field, value] of Object.entries(sharedMetadata)) {
+      const currentValue = JSON.stringify(pkg[field]);
+      const nextValue = JSON.stringify(value);
+      if (currentValue !== nextValue) {
+        pkg[field] = value;
+        changed = true;
+      }
+    }
   }
 
   for (const section of dependencySections) {
