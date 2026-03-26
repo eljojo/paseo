@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.35 - 2026-03-26
+
+### Improved
+- Faster app startup by redirecting to the welcome screen immediately and showing host connection status inline.
+- Codex file deletions now display correctly as removed lines in diffs.
+- OpenCode questions are now surfaced in the permission UI.
+
+### Fixed
+- Fixed queued prompt dispatch after idle transition.
+- Replaced bash-only `mapfile` with a portable `while-read` loop in the chat script.
+
+### Added
+- Added support for Nix and NixOS installation.
+
 ## 0.1.34 - 2026-03-25
 
 ### Added
