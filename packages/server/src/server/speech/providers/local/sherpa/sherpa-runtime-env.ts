@@ -70,6 +70,21 @@ export function resolveSherpaLoaderEnv(
   }
 }
 
+/**
+ * Find the actual case-sensitive key in a plain object that matches the given
+ * key case-insensitively. On Windows, `{...process.env}` produces a plain
+ * (case-sensitive) object where PATH is typically stored as `Path`. Using a
+ * hardcoded `"PATH"` would miss the existing key and create a duplicate,
+ * breaking the child process's PATH.
+ */
+function findEnvKey(env: NodeJS.ProcessEnv, key: string): string {
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(env)) {
+    if (k.toLowerCase() === lower) return k;
+  }
+  return key;
+}
+
 export function applySherpaLoaderEnv(
   env: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
@@ -90,9 +105,10 @@ export function applySherpaLoaderEnv(
     };
   }
 
-  const next = prependEnvPath(env[resolved.key], resolved.libDir);
-  const changed = next !== (env[resolved.key] ?? "");
-  env[resolved.key] = next;
+  const actualKey = findEnvKey(env, resolved.key);
+  const next = prependEnvPath(env[actualKey], resolved.libDir);
+  const changed = next !== (env[actualKey] ?? "");
+  env[actualKey] = next;
   return {
     changed,
     key: resolved.key,

@@ -9,5 +9,6 @@ if not exist "%APP_EXECUTABLE%" (
   exit /b 1
 )
 
-set "PASEO_DESKTOP_CLI=1"
-"%APP_EXECUTABLE%" %*
+set "ELECTRON_RUN_AS_NODE=1"
+"%APP_EXECUTABLE%" "%RESOURCES_DIR%\app.asar\dist\daemon\node-entrypoint-runner.js" bare "%RESOURCES_DIR%\app.asar\node_modules\@getpaseo\cli\dist\index.js" %*
+exit /b %errorlevel%

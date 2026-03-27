@@ -67,7 +67,11 @@ import type {
   McpServerConfig,
   PersistedAgentDescriptor,
 } from "../agent-sdk-types.js";
-import { applyProviderEnv, type ProviderRuntimeSettings } from "../provider-launch-config.js";
+import {
+  applyProviderEnv,
+  findExecutable,
+  type ProviderRuntimeSettings,
+} from "../provider-launch-config.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
@@ -201,11 +205,14 @@ function applyRuntimeSettingsToClaudeOptions(
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
       const resolved = resolveClaudeSpawnCommand(spawnOptions, runtimeSettings);
-      // The SDK defaults to spawning "node" via PATH lookup, which fails when
-      // running from the managed runtime bundle where node isn't in PATH.
-      // Always use process.execPath — the actual node binary running the daemon.
-      const command =
-        resolved.command === spawnOptions.command ? process.execPath : resolved.command;
+      // When the SDK passes a default JS runtime ("node"/"bun"), replace it with
+      // process.execPath — the actual node binary running the daemon. This avoids
+      // PATH lookup failures in the managed runtime bundle.
+      // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
+      // or the user overrides the command via runtime settings, use that directly.
+      const isDefaultRuntime =
+        resolved.command === "node" || resolved.command === "bun";
+      const command = isDefaultRuntime ? process.execPath : resolved.command;
       const child = spawn(command, resolved.args, {
         cwd: spawnOptions.cwd,
         env: {
@@ -1855,12 +1862,14 @@ class ClaudeAgentSession implements AgentSession {
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
 
+    const claudeBinary = findExecutable("claude");
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
       includePartialMessages: true,
       permissionMode: this.currentMode,
       agents: this.defaults?.agents,
       canUseTool: this.handlePermissionRequest,
+      ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
       // Use Claude Code preset system prompt and load CLAUDE.md files
       // Append provider-agnostic system prompt and orchestrator instructions for agents.
       systemPrompt: {
