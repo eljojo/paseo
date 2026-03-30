@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.38 - 2026-03-30
+
+### Fixed
+- Fixed daemon startup race where the app could time out connecting on first launch because the PID file advertised a listen address before the server was ready.
+- Fixed daemon log rotation losing startup traces — trace-level WebSocket logs no longer include full message payloads.
+
 ## 0.1.37 - 2026-03-29
 
 ### Added
