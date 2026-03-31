@@ -99,7 +99,8 @@ export type WorkspaceOpenIntent =
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "file"; path: string }
-  | { kind: "draft"; draftId: string };
+  | { kind: "draft"; draftId: string }
+  | { kind: "setup"; workspaceId: string };
 
 export function parseWorkspaceOpenIntent(
   value: string | null | undefined,
@@ -135,6 +136,13 @@ export function parseWorkspaceOpenIntent(
       return null;
     }
     return { kind: "file", path: decodedPath };
+  }
+  if (kind === "setup") {
+    const workspaceId = decodeWorkspaceIdFromPathSegment(payload);
+    if (!workspaceId) {
+      return null;
+    }
+    return { kind: "setup", workspaceId };
   }
 
   return null;

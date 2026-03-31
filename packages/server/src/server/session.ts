@@ -2664,7 +2664,7 @@ export class Session {
         ...(provisionalTitle ? { title: provisionalTitle } : {}),
       };
 
-      const { sessionConfig, worktreeConfig } = await this.buildAgentSessionConfig(
+      const { sessionConfig, worktreeBootstrap } = await this.buildAgentSessionConfig(
         resolvedConfig,
         git,
         worktreeName,
@@ -2724,10 +2724,11 @@ export class Session {
         });
       }
 
-      if (worktreeConfig) {
+      if (worktreeBootstrap) {
         void runAsyncWorktreeBootstrap({
           agentId: snapshot.id,
-          worktree: worktreeConfig,
+          worktree: worktreeBootstrap.worktree,
+          shouldBootstrap: worktreeBootstrap.shouldBootstrap,
           terminalManager: this.terminalManager,
           appendTimelineItem: (item) =>
             appendTimelineItemIfAgentKnown({
@@ -2909,7 +2910,10 @@ export class Session {
     gitOptions?: GitSetupOptions,
     legacyWorktreeName?: string,
     _labels?: Record<string, string>,
-  ): Promise<{ sessionConfig: AgentSessionConfig; worktreeConfig?: WorktreeConfig }> {
+  ): Promise<{
+    sessionConfig: AgentSessionConfig;
+    worktreeBootstrap?: { worktree: WorktreeConfig; shouldBootstrap: boolean };
+  }> {
     return buildWorktreeAgentSessionConfig(
       {
         paseoHome: this.paseoHome,
@@ -5562,8 +5566,12 @@ export class Session {
         paseoHome: this.paseoHome,
         emitWorkspaceUpdateForCwd: (cwd, emitOptions) =>
           this.emitWorkspaceUpdateForCwd(cwd, emitOptions),
+        emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
+        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        serviceRouteStore: this.serviceRouteStore,
+        daemonPort: this.getDaemonTcpPort?.() ?? null,
       },
       options,
     );

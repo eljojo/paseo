@@ -195,7 +195,26 @@ const NonNullUnknownSchema = z.union([
   z.object({}).passthrough(),
 ]);
 
+const WorktreeSetupCommandSnapshotSchema = z.object({
+  index: z.number().int().positive(),
+  command: z.string(),
+  cwd: z.string(),
+  status: z.enum(["running", "completed", "failed"]),
+  exitCode: z.number().nullable(),
+  durationMs: z.number().nonnegative().optional(),
+});
+
+const WorktreeSetupDetailPayloadSchema = z.object({
+  type: z.literal("worktree_setup"),
+  worktreePath: z.string(),
+  branchName: z.string(),
+  log: z.string(),
+  commands: z.array(WorktreeSetupCommandSnapshotSchema),
+  truncated: z.boolean().optional(),
+});
+
 const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUnion("type", [
+  WorktreeSetupDetailPayloadSchema,
   z.object({
     type: z.literal("shell"),
     command: z.string(),
@@ -253,23 +272,6 @@ const ToolCallDetailPayloadSchema: z.ZodType<ToolCallDetail> = z.discriminatedUn
     codeText: z.string().optional(),
     bytes: z.number().optional(),
     durationMs: z.number().optional(),
-  }),
-  z.object({
-    type: z.literal("worktree_setup"),
-    worktreePath: z.string(),
-    branchName: z.string(),
-    log: z.string(),
-    commands: z.array(
-      z.object({
-        index: z.number().int().positive(),
-        command: z.string(),
-        cwd: z.string(),
-        status: z.enum(["running", "completed", "failed"]),
-        exitCode: z.number().nullable(),
-        durationMs: z.number().nonnegative().optional(),
-      }),
-    ),
-    truncated: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("sub_agent"),
@@ -1680,6 +1682,16 @@ export const WorkspaceUpdateMessageSchema = z.object({
   ]),
 });
 
+export const WorkspaceSetupProgressMessageSchema = z.object({
+  type: z.literal("workspace_setup_progress"),
+  payload: z.object({
+    workspaceId: z.string(),
+    status: z.enum(["running", "completed", "failed"]),
+    detail: WorktreeSetupDetailPayloadSchema,
+    error: z.string().nullable(),
+  }),
+});
+
 export const OpenProjectResponseMessageSchema = z.object({
   type: z.literal("open_project_response"),
   payload: z.object({
@@ -2251,6 +2263,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  WorkspaceSetupProgressMessageSchema,
   AgentStreamMessageSchema,
   AgentStatusMessageSchema,
   FetchAgentsResponseMessageSchema,
@@ -2334,6 +2347,7 @@ export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSche
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
+export type WorkspaceSetupProgressMessage = z.infer<typeof WorkspaceSetupProgressMessageSchema>;
 export type AgentStreamMessage = z.infer<typeof AgentStreamMessageSchema>;
 export type AgentStatusMessage = z.infer<typeof AgentStatusMessageSchema>;
 export type ProjectCheckoutLitePayload = z.infer<typeof ProjectCheckoutLitePayloadSchema>;

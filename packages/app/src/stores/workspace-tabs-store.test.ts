@@ -200,4 +200,19 @@ describe("workspace-tabs-store retargetTab", () => {
     expect(reopenedFileTabId).toBe(fileTabId);
     expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(fileTabId);
   });
+
+  it("builds a deterministic setup tab keyed by workspace id", () => {
+    const key = buildWorkspaceTabPersistenceKey({ serverId: SERVER_ID, workspaceId: WORKSPACE_ID });
+    expect(key).toBeTruthy();
+    const workspaceKey = key as string;
+
+    const tabId = useWorkspaceTabsStore.getState().openOrFocusTab({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+      target: { kind: "setup", workspaceId: WORKSPACE_ID },
+    });
+
+    expect(tabId).toBe(`setup_${WORKSPACE_ID}`);
+    expect(useWorkspaceTabsStore.getState().focusedTabIdByWorkspace[workspaceKey]).toBe(tabId);
+  });
 });

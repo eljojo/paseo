@@ -10,7 +10,11 @@ type TempRepo = {
 
 export const createTempGitRepo = async (
   prefix = "paseo-e2e-",
-  options?: { withRemote?: boolean },
+  options?: {
+    withRemote?: boolean;
+    paseoConfig?: Record<string, unknown>;
+    files?: Array<{ path: string; content: string }>;
+  },
 ): Promise<TempRepo> => {
   // Keep E2E repo paths short so terminal prompt + typed commands stay visible without zsh clipping.
   const tempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
@@ -22,7 +26,24 @@ export const createTempGitRepo = async (
   execSync('git config user.name "Paseo E2E"', { cwd: repoPath, stdio: "ignore" });
   execSync("git config commit.gpgsign false", { cwd: repoPath, stdio: "ignore" });
   await writeFile(path.join(repoPath, "README.md"), "# Temp Repo\n");
+  if (options?.paseoConfig) {
+    await writeFile(
+      path.join(repoPath, "paseo.json"),
+      JSON.stringify(options.paseoConfig, null, 2),
+    );
+  }
+  for (const file of options?.files ?? []) {
+    const filePath = path.join(repoPath, file.path);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, file.content);
+  }
   execSync("git add README.md", { cwd: repoPath, stdio: "ignore" });
+  if (options?.paseoConfig) {
+    execSync("git add paseo.json", { cwd: repoPath, stdio: "ignore" });
+  }
+  for (const file of options?.files ?? []) {
+    execSync(`git add ${JSON.stringify(file.path)}`, { cwd: repoPath, stdio: "ignore" });
+  }
   execSync('git commit -m "Initial commit"', { cwd: repoPath, stdio: "ignore" });
 
   if (withRemote) {

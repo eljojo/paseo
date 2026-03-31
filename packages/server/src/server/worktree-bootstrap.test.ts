@@ -56,7 +56,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       stdio: "pipe",
     });
 
-    const worktree = await createAgentWorktree({
+    const worktreeBootstrap = await createAgentWorktree({
       cwd: repoDir,
       branchName: "feature-streaming-setup",
       baseBranch: "main",
@@ -69,7 +69,8 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     await runAsyncWorktreeBootstrap({
       agentId: "agent-test",
-      worktree,
+      worktree: worktreeBootstrap.worktree,
+      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: null,
       appendTimelineItem: async (item) => {
         persisted.push(item);
@@ -160,7 +161,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       stdio: "pipe",
     });
 
-    const worktree = await createAgentWorktree({
+    const worktreeBootstrap = await createAgentWorktree({
       cwd: repoDir,
       branchName: "feature-live-failure",
       baseBranch: "main",
@@ -172,7 +173,8 @@ describe("runAsyncWorktreeBootstrap", () => {
     await expect(
       runAsyncWorktreeBootstrap({
         agentId: "agent-live-failure",
-        worktree,
+        worktree: worktreeBootstrap.worktree,
+        shouldBootstrap: worktreeBootstrap.shouldBootstrap,
         terminalManager: null,
         appendTimelineItem: async (item) => {
           persisted.push(item);
@@ -210,7 +212,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       stdio: "pipe",
     });
 
-    const worktree = await createAgentWorktree({
+    const worktreeBootstrap = await createAgentWorktree({
       cwd: repoDir,
       branchName: "feature-large-output",
       baseBranch: "main",
@@ -221,7 +223,8 @@ describe("runAsyncWorktreeBootstrap", () => {
     const persisted: AgentTimelineItem[] = [];
     await runAsyncWorktreeBootstrap({
       agentId: "agent-large-output",
-      worktree,
+      worktree: worktreeBootstrap.worktree,
+      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: null,
       appendTimelineItem: async (item) => {
         persisted.push(item);
@@ -266,7 +269,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       stdio: "pipe",
     });
 
-    const worktree = await createAgentWorktree({
+    const worktreeBootstrap = await createAgentWorktree({
       cwd: repoDir,
       branchName: "feature-terminal-readiness",
       baseBranch: "main",
@@ -280,7 +283,8 @@ describe("runAsyncWorktreeBootstrap", () => {
 
     await runAsyncWorktreeBootstrap({
       agentId: "agent-terminal-readiness",
-      worktree,
+      worktree: worktreeBootstrap.worktree,
+      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: {
         async getTerminals() {
           return [];
@@ -357,7 +361,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       stdio: "pipe",
     });
 
-    const worktree = await createAgentWorktree({
+    const worktreeBootstrap = await createAgentWorktree({
       cwd: repoDir,
       branchName: "feature-shared-runtime-port",
       baseBranch: "main",
@@ -370,7 +374,8 @@ describe("runAsyncWorktreeBootstrap", () => {
     const persisted: AgentTimelineItem[] = [];
     await runAsyncWorktreeBootstrap({
       agentId: "agent-shared-runtime-port",
-      worktree,
+      worktree: worktreeBootstrap.worktree,
+      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
       terminalManager: {
         async getTerminals() {
           return [];
@@ -416,13 +421,13 @@ describe("runAsyncWorktreeBootstrap", () => {
       emitLiveTimelineItem: async () => true,
     });
 
-    const setupPortPath = join(worktree.worktreePath, "setup-port.txt");
+    const setupPortPath = join(worktreeBootstrap.worktree.worktreePath, "setup-port.txt");
     await waitForPathExists(setupPortPath);
 
     const setupPort = readFileSync(setupPortPath, "utf8").trim();
     expect(setupPort.length).toBeGreaterThan(0);
     expect(registeredEnvs).toHaveLength(1);
-    expect(registeredEnvs[0]?.cwd).toBe(worktree.worktreePath);
+    expect(registeredEnvs[0]?.cwd).toBe(worktreeBootstrap.worktree.worktreePath);
     expect(registeredEnvs[0]?.env.PASEO_WORKTREE_PORT).toBe(setupPort);
     expect(createTerminalEnvs.length).toBeGreaterThan(0);
     expect(createTerminalEnvs[0]?.PASEO_WORKTREE_PORT).toBe(setupPort);

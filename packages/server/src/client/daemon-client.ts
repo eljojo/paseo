@@ -124,6 +124,11 @@ export type DaemonEvent =
       payload: Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"];
     }
   | {
+      type: "workspace_setup_progress";
+      workspaceId: string;
+      payload: Extract<SessionOutboundMessage, { type: "workspace_setup_progress" }>["payload"];
+    }
+  | {
       type: "agent_stream";
       agentId: string;
       event: AgentStreamEventPayload;
@@ -3521,6 +3526,12 @@ export class DaemonClient {
         return {
           type: "workspace_update",
           workspaceId: msg.payload.kind === "upsert" ? msg.payload.workspace.id : msg.payload.id,
+          payload: msg.payload,
+        };
+      case "workspace_setup_progress":
+        return {
+          type: "workspace_setup_progress",
+          workspaceId: msg.payload.workspaceId,
           payload: msg.payload,
         };
       case "agent_stream":

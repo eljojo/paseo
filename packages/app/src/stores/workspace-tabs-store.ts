@@ -6,7 +6,8 @@ export type WorkspaceTabTarget =
   | { kind: "draft"; draftId: string }
   | { kind: "agent"; agentId: string }
   | { kind: "terminal"; terminalId: string }
-  | { kind: "file"; path: string };
+  | { kind: "file"; path: string }
+  | { kind: "setup"; workspaceId: string };
 
 export type WorkspaceTab = {
   tabId: string;
@@ -60,6 +61,10 @@ function normalizeTabTarget(
     const path = trimNonEmpty(value.path);
     return path ? { kind: "file", path: path.replace(/\\/g, "/") } : null;
   }
+  if (value.kind === "setup") {
+    const workspaceId = trimNonEmpty(value.workspaceId);
+    return workspaceId ? { kind: "setup", workspaceId: workspaceId.replace(/\\/g, "/") } : null;
+  }
   return null;
 }
 
@@ -79,6 +84,9 @@ function tabTargetsEqual(left: WorkspaceTabTarget, right: WorkspaceTabTarget): b
   if (left.kind === "file" && right.kind === "file") {
     return left.path === right.path;
   }
+  if (left.kind === "setup" && right.kind === "setup") {
+    return left.workspaceId === right.workspaceId;
+  }
   return false;
 }
 
@@ -91,6 +99,9 @@ function buildDeterministicTabId(target: WorkspaceTabTarget): string {
   }
   if (target.kind === "terminal") {
     return `terminal_${target.terminalId}`;
+  }
+  if (target.kind === "setup") {
+    return `setup_${target.workspaceId}`;
   }
   return `file_${target.path}`;
 }

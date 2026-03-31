@@ -50,4 +50,33 @@ describe("workspace message schemas", () => {
 
     expect(result.success).toBe(false);
   });
+
+  test("parses workspace_setup_progress payload", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "workspace_setup_progress",
+      payload: {
+        workspaceId: "/repo/.paseo/worktrees/feature-a",
+        status: "completed",
+        detail: {
+          type: "worktree_setup",
+          worktreePath: "/repo/.paseo/worktrees/feature-a",
+          branchName: "feature-a",
+          log: "done",
+          commands: [
+            {
+              index: 1,
+              command: "npm install",
+              cwd: "/repo/.paseo/worktrees/feature-a",
+              status: "completed",
+              exitCode: 0,
+              durationMs: 100,
+            },
+          ],
+        },
+        error: null,
+      },
+    });
+
+    expect(parsed.type).toBe("workspace_setup_progress");
+  });
 });

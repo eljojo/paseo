@@ -35,6 +35,7 @@ import {
   normalizeWorkspaceDescriptor,
 } from "@/stores/session-store";
 import { useDraftStore } from "@/stores/draft-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import type { AgentDirectoryEntry } from "@/types/agent-directory";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible } from "@/utils/app-visibility";
@@ -159,6 +160,10 @@ type WorkspaceUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "workspace_update" }
 >["payload"];
+type WorkspaceSetupProgressPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace_setup_progress" }
+>["payload"];
 
 const getAgentIdFromUpdate = (update: AgentUpdatePayload): string =>
   update.kind === "remove" ? update.agentId : update.agent.id;
@@ -264,6 +269,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
   const updateSessionClient = useSessionStore((state) => state.updateSessionClient);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
+  const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
+  const removeWorkspaceSetup = useWorkspaceSetupStore((state) => state.removeWorkspace);
+  const clearWorkspaceSetupServer = useWorkspaceSetupStore((state) => state.clearServer);
 
   // Track focused agent for heartbeat
   const focusedAgentId = useSessionStore(
@@ -748,6 +756,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     ],
   );
 
+  const applyWorkspaceSetupProgress = useCallback(
+    (payload: WorkspaceSetupProgressPayload) => {
+      upsertWorkspaceSetupProgress({ serverId, payload });
+    },
+    [serverId, upsertWorkspaceSetupProgress],
+  );
+
   const requestCanonicalCatchUp = useCallback(
     (agentId: string, cursor: { epoch: string; endSeq: number }) => {
       void client
@@ -1090,10 +1105,16 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubWorkspaceUpdate = client.on("workspace_update", (message) => {
       if (message.type !== "workspace_update") return;
       if (message.payload.kind === "remove") {
+        removeWorkspaceSetup({ serverId, workspaceId: message.payload.id });
         removeWorkspace(serverId, message.payload.id);
         return;
       }
       mergeWorkspaces(serverId, [normalizeWorkspaceDescriptor(message.payload.workspace)]);
+    });
+
+    const unsubWorkspaceSetupProgress = client.on("workspace_setup_progress", (message) => {
+      if (message.type !== "workspace_setup_progress") return;
+      applyWorkspaceSetupProgress(message.payload);
     });
 
     const unsubStatus = client.on("status", (message) => {
@@ -1444,6 +1465,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentStream();
       unsubAgentTimeline();
       unsubWorkspaceUpdate();
+      unsubWorkspaceSetupProgress();
       unsubStatus();
       unsubPermissionRequest();
       unsubPermissionResolved();
@@ -1471,6 +1493,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setAgents,
     mergeWorkspaces,
     removeWorkspace,
+    removeWorkspaceSetup,
     setAgentLastActivity,
     setPendingPermissions,
     setHasHydratedAgents,
@@ -1478,6 +1501,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     notifyAgentAttention,
     requestCanonicalCatchUp,
     applyAgentUpdatePayload,
+    applyWorkspaceSetupProgress,
     applyTimelineResponse,
     voiceRuntime,
     voiceAudioEngine,
@@ -1681,9 +1705,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      clearWorkspaceSetupServer(serverId);
       clearSession(serverId);
     };
-  }, [clearSession, serverId]);
+  }, [clearSession, clearWorkspaceSetupServer, serverId]);
 
   return children;
 }

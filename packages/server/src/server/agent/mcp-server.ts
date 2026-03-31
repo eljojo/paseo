@@ -431,6 +431,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       let resolvedCwd: string;
       let resolvedMode: string | undefined;
       let worktreeConfig: WorktreeConfig | undefined;
+      let shouldBootstrapWorktree: boolean | undefined;
 
       if (callerAgentId) {
         const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
@@ -467,15 +468,16 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           if (!baseBranch) {
             throw new Error("baseBranch is required when creating a worktree");
           }
-          const worktree = await createAgentWorktree({
+          const worktreeBootstrap = await createAgentWorktree({
             branchName: worktreeName,
             cwd: resolvedCwd,
             baseBranch,
             worktreeSlug: worktreeName,
             paseoHome: options.paseoHome,
           });
-          resolvedCwd = worktree.worktreePath;
-          worktreeConfig = worktree;
+          resolvedCwd = worktreeBootstrap.worktree.worktreePath;
+          worktreeConfig = worktreeBootstrap.worktree;
+          shouldBootstrapWorktree = worktreeBootstrap.shouldBootstrap;
         }
 
         resolvedMode = initialMode;
@@ -500,6 +502,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         void runAsyncWorktreeBootstrap({
           agentId: snapshot.id,
           worktree: worktreeConfig,
+          shouldBootstrap: shouldBootstrapWorktree,
           terminalManager: terminalManager ?? null,
           appendTimelineItem: (item) =>
             appendTimelineItemIfAgentKnown({

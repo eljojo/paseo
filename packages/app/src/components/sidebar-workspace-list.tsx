@@ -695,7 +695,7 @@ function ProjectHeaderRow({
         prepareWorkspaceTab({
           serverId: serverId!,
           workspaceId: workspace.id,
-          target: { kind: "draft", draftId: "new" },
+          target: { kind: "setup", workspaceId: workspace.id },
         }) as any,
       );
     },

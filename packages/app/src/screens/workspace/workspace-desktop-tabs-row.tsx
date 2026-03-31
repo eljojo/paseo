@@ -79,6 +79,9 @@ function getFallbackTabLabel(tab: WorkspaceTabDescriptor): string {
   if (tab.target.kind === "draft") {
     return "New Agent";
   }
+  if (tab.target.kind === "setup") {
+    return "Setup";
+  }
   if (tab.target.kind === "terminal") {
     return "Terminal";
   }

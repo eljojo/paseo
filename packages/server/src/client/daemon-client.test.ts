@@ -213,6 +213,80 @@ describe("DaemonClient", () => {
     expect(client.getConnectionState().status).toBe("disposed");
   });
 
+  test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {
+    const logger = createMockLogger();
+    const mock = createMockTransport();
+
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_unit_test",
+      logger,
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+
+    const events: Array<Parameters<Parameters<typeof client.subscribe>[0]>[0]> = [];
+    client.subscribe((event) => {
+      events.push(event);
+    });
+
+    const connectPromise = client.connect();
+    mock.triggerOpen();
+    await connectPromise;
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "workspace_setup_progress",
+        payload: {
+          workspaceId: "/tmp/project/.paseo/worktrees/feature-a",
+          status: "running",
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+            branchName: "feature-a",
+            log: "phase-one\n",
+            commands: [
+              {
+                index: 1,
+                command: "npm install",
+                cwd: "/tmp/project/.paseo/worktrees/feature-a",
+                status: "running",
+                exitCode: null,
+              },
+            ],
+          },
+          error: null,
+        },
+      }),
+    );
+
+    expect(events).toContainEqual({
+      type: "workspace_setup_progress",
+      workspaceId: "/tmp/project/.paseo/worktrees/feature-a",
+      payload: {
+        workspaceId: "/tmp/project/.paseo/worktrees/feature-a",
+        status: "running",
+        detail: {
+          type: "worktree_setup",
+          worktreePath: "/tmp/project/.paseo/worktrees/feature-a",
+          branchName: "feature-a",
+          log: "phase-one\n",
+          commands: [
+            {
+              index: 1,
+              command: "npm install",
+              cwd: "/tmp/project/.paseo/worktrees/feature-a",
+              status: "running",
+              exitCode: null,
+            },
+          ],
+        },
+        error: null,
+      },
+    });
+  });
+
   test("sends explicit shutdown_server_request via shutdownServer", async () => {
     const logger = createMockLogger();
     const mock = createMockTransport();
