@@ -38,6 +38,7 @@ import type {
   ArchiveWorkspaceResponseMessage,
   ListCommandsResponse,
   ListProviderModelsResponseMessage,
+  ListProviderModesResponseMessage,
   ListAvailableProvidersResponse,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -216,6 +217,7 @@ type CreatePaseoWorktreePayload = Extract<
 type FileExplorerPayload = FileExplorerResponse["payload"];
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
+type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
@@ -2470,6 +2472,22 @@ export class DaemonClient {
       },
       responseType: "list_provider_models_response",
       // Provider SDK cold starts (especially model discovery) can exceed 30s.
+      timeout: 45000,
+    });
+  }
+
+  async listProviderModes(
+    provider: AgentProvider,
+    options?: { cwd?: string; requestId?: string },
+  ): Promise<ListProviderModesPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_provider_modes_request",
+        provider,
+        cwd: options?.cwd,
+      },
+      responseType: "list_provider_modes_response",
       timeout: 45000,
     });
   }

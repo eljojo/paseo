@@ -1661,6 +1661,10 @@ export class Session {
           await this.handleListProviderModelsRequest(msg);
           break;
 
+        case "list_provider_modes_request":
+          await this.handleListProviderModesRequest(msg);
+          break;
+
         case "list_available_providers_request":
           await this.handleListAvailableProvidersRequest(msg);
           break;
@@ -3032,6 +3036,41 @@ export class Session {
       );
       this.emit({
         type: "list_provider_models_response",
+        payload: {
+          provider: msg.provider,
+          error: (error as Error)?.message ?? String(error),
+          fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleListProviderModesRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_provider_modes_request" }>,
+  ): Promise<void> {
+    const fetchedAt = new Date().toISOString();
+    try {
+      const modes = await this.providerRegistry[msg.provider].fetchModes({
+        cwd: msg.cwd ? expandTilde(msg.cwd) : undefined,
+      });
+      this.emit({
+        type: "list_provider_modes_response",
+        payload: {
+          provider: msg.provider,
+          modes,
+          error: null,
+          fetchedAt,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, provider: msg.provider },
+        `Failed to list modes for ${msg.provider}`,
+      );
+      this.emit({
+        type: "list_provider_modes_response",
         payload: {
           provider: msg.provider,
           error: (error as Error)?.message ?? String(error),

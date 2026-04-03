@@ -444,6 +444,31 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
 
   const availableModels = providerModelsQuery.data ?? null;
 
+  const providerModesQuery = useQuery({
+    queryKey: ["providerModes", formState.serverId, formState.provider, debouncedCwd],
+    enabled: Boolean(
+      isVisible &&
+        isTargetDaemonReady &&
+        formState.serverId &&
+        client &&
+        isConnected &&
+        providerDefinitionMap.has(formState.provider),
+    ),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!client) {
+        throw new Error("Host is not connected");
+      }
+      const payload = await client.listProviderModes(formState.provider, {
+        cwd: debouncedCwd,
+      });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.modes ?? [];
+    },
+  });
+
   const allProviderModelQueries = useQueries({
     queries: providerDefinitions.map((def) => ({
       queryKey: ["providerModels", formState.serverId, def.id],
@@ -722,7 +747,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   ]);
 
   const agentDefinition = providerDefinitionMap.get(formState.provider);
-  const modeOptions = agentDefinition?.modes ?? [];
+  const modeOptions = providerModesQuery.data ?? agentDefinition?.modes ?? [];
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];

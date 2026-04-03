@@ -26,6 +26,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   ListModelsOptions,
+  ListModesOptions,
   ListPersistedAgentsOptions,
   McpServerConfig,
   PersistedAgentDescriptor,
@@ -62,8 +63,6 @@ const DEFAULT_MODES: AgentMode[] = [
     description: "Read-only planning mode that avoids file edits",
   },
 ];
-
-const OPENCODE_MODE_IDS = new Set(DEFAULT_MODES.map((mode) => mode.id));
 
 type OpenCodeAgentConfig = AgentSessionConfig & { provider: "opencode" };
 type OpenCodeMessageRole = "user" | "assistant";
@@ -561,6 +560,41 @@ export class OpenCodeAgentClient implements AgentClient {
     }
 
     return models;
+  }
+
+  async listModes(options?: ListModesOptions): Promise<AgentMode[]> {
+    const { url } = await this.serverManager.ensureRunning();
+    const directory = options?.cwd ?? process.cwd();
+    const client = createOpencodeClient({ baseUrl: url, directory });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error("OpenCode app.agents timed out after 10s")),
+        10_000,
+      );
+    });
+
+    const response = await Promise.race([
+      client.app.agents({ directory }),
+      timeoutPromise,
+    ]);
+
+    if (response.error || !response.data) {
+      return DEFAULT_MODES;
+    }
+
+    const discovered = response.data
+      .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
+      .map((agent) => ({
+        id: agent.name,
+        label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        description:
+          typeof agent.description === "string" && agent.description.trim().length > 0
+            ? agent.description.trim()
+            : DEFAULT_MODES.find((mode) => mode.id === agent.name)?.description,
+      }));
+
+    return discovered.length > 0 ? sortOpenCodeModes(discovered) : DEFAULT_MODES;
   }
 
   async listPersistedAgents(
@@ -1160,7 +1194,7 @@ class OpenCodeAgentSession implements AgentSession {
         sessionID: this.sessionId,
         directory: this.config.cwd,
         command: slashCommand.commandName,
-        arguments: slashCommand.args,
+        arguments: slashCommand.args ?? "",
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(effectiveMode ? { agent: effectiveMode } : {}),
         ...(effectiveVariant ? { variant: effectiveVariant } : {}),
@@ -1432,7 +1466,6 @@ class OpenCodeAgentSession implements AgentSession {
         ? []
         : response.data
             .filter((agent) => agent.mode === "primary" && agent.hidden !== true)
-            .filter((agent) => OPENCODE_MODE_IDS.has(agent.name))
             .map((agent) => ({
               id: agent.name,
               label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),

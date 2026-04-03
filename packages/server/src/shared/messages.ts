@@ -728,6 +728,13 @@ export const ListProviderModelsRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ListProviderModesRequestMessageSchema = z.object({
+  type: z.literal("list_provider_modes_request"),
+  provider: AgentProviderSchema,
+  cwd: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const ListAvailableProvidersRequestMessageSchema = z.object({
   type: z.literal("list_available_providers_request"),
   requestId: z.string(),
@@ -1208,6 +1215,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DictationStreamCancelMessageSchema,
   CreateAgentRequestMessageSchema,
   ListProviderModelsRequestMessageSchema,
+  ListProviderModesRequestMessageSchema,
   ListAvailableProvidersRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -2112,6 +2120,17 @@ export const ListProviderModelsResponseMessageSchema = z.object({
   }),
 });
 
+export const ListProviderModesResponseMessageSchema = z.object({
+  type: z.literal("list_provider_modes_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    modes: z.array(AgentModeSchema).optional(),
+    error: z.string().nullable().optional(),
+    fetchedAt: z.string(),
+    requestId: z.string(),
+  }),
+});
+
 const ProviderAvailabilitySchema = z.object({
   provider: AgentProviderSchema,
   available: z.boolean(),
@@ -2317,6 +2336,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectIconResponseSchema,
   FileDownloadTokenResponseSchema,
   ListProviderModelsResponseMessageSchema,
+  ListProviderModesResponseMessageSchema,
   ListAvailableProvidersResponseSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
@@ -2386,6 +2406,9 @@ export type AgentDeletedMessage = z.infer<typeof AgentDeletedMessageSchema>;
 export type ListProviderModelsResponseMessage = z.infer<
   typeof ListProviderModelsResponseMessageSchema
 >;
+export type ListProviderModesResponseMessage = z.infer<
+  typeof ListProviderModesResponseMessageSchema
+>;
 export type ListAvailableProvidersResponse = z.infer<typeof ListAvailableProvidersResponseSchema>;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
@@ -2424,6 +2447,9 @@ export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelM
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
   typeof ListProviderModelsRequestMessageSchema
+>;
+export type ListProviderModesRequestMessage = z.infer<
+  typeof ListProviderModesRequestMessageSchema
 >;
 export type ListAvailableProvidersRequestMessage = z.infer<
   typeof ListAvailableProvidersRequestMessageSchema

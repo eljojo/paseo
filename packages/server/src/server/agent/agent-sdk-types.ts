@@ -414,6 +414,10 @@ export interface ListModelsOptions {
   cwd?: string;
 }
 
+export interface ListModesOptions {
+  cwd?: string;
+}
+
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
@@ -427,6 +431,7 @@ export interface AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession>;
   listModels(options?: ListModelsOptions): Promise<AgentModelDefinition[]>;
+  listModes?(options?: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
   /**
    * Check if this provider is available (CLI binary is installed).

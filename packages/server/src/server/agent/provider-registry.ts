@@ -1,8 +1,10 @@
 import type {
   AgentClient,
+  AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ListModelsOptions,
+  ListModesOptions,
 } from "./agent-sdk-types.js";
 import type { AgentProviderRuntimeSettingsMap } from "./provider-launch-config.js";
 import type { Logger } from "pino";
@@ -24,6 +26,7 @@ export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 export interface ProviderDefinition extends AgentProviderDefinition {
   createClient: (logger: Logger) => AgentClient;
   fetchModels: (options?: ListModelsOptions) => Promise<AgentModelDefinition[]>;
+  fetchModes: (options?: ListModesOptions) => Promise<AgentMode[]>;
 }
 
 type BuildProviderRegistryOptions = {
@@ -69,6 +72,10 @@ export function buildProviderRegistry(
           ...definition,
           createClient: (providerLogger: Logger) => createClient(providerLogger, runtimeSettings),
           fetchModels: (listOptions?: ListModelsOptions) => modelClient.listModels(listOptions),
+          fetchModes: (listOptions?: ListModesOptions) =>
+            modelClient.listModes
+              ? modelClient.listModes(listOptions)
+              : Promise.resolve(definition.modes),
         } satisfies ProviderDefinition,
       ];
     }),
