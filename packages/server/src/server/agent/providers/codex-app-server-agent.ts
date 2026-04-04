@@ -1,6 +1,8 @@
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentFeature,
+  AgentFeatureToggle,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -85,6 +87,20 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+const CODEX_FAST_MODE_SUPPORTED_MODE_PREFIXES = [
+  "gpt-5",
+  "gpt-4.1",
+  "o3",
+  "o4-mini",
+] as const;
+const CODEX_FAST_MODE_FEATURE: AgentFeatureToggle = {
+  type: "toggle",
+  id: "fast_mode",
+  label: "Fast",
+  description: "Priority inference at 2x usage",
+  icon: "zap",
+  value: false,
+};
 
 const MODE_PRESETS: Record<
   string,
@@ -138,6 +154,16 @@ function normalizeCodexModelId(modelId: string | null | undefined): string | und
 
 function normalizeCodexModelLabel(displayName: string): string {
   return displayName.replace(/\bgpt\b/gi, "GPT");
+}
+
+function codexModelSupportsFastMode(modelId: string | null | undefined): boolean {
+  const normalizedModelId = normalizeCodexModelId(modelId);
+  if (!normalizedModelId) {
+    return false;
+  }
+  return CODEX_FAST_MODE_SUPPORTED_MODE_PREFIXES.some(
+    (prefix) => normalizedModelId === prefix || normalizedModelId.startsWith(prefix),
+  );
 }
 
 type CodexConfiguredDefaults = {
@@ -2019,11 +2045,6 @@ function buildCodexAppServerEnv(
   };
 }
 
-export const __codexAppServerInternals = {
-  buildCodexAppServerEnv,
-  mapCodexPatchNotificationToToolCall,
-};
-
 class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -2038,6 +2059,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
+  private serviceTier: "fast" | null = null;
   private historyPending = false;
   private persistedHistory: AgentTimelineItem[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -2094,6 +2116,9 @@ class CodexAppServerAgentSession implements AgentSession {
     this.currentMode = config.modeId;
     this.config = config;
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
+    if (this.config.featureValues?.fast_mode) {
+      this.serviceTier = "fast";
+    }
 
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
@@ -2103,6 +2128,13 @@ class CodexAppServerAgentSession implements AgentSession {
 
   get id(): string | null {
     return this.currentThreadId;
+  }
+
+  get features(): AgentFeature[] {
+    if (!codexModelSupportsFastMode(this.config.model)) {
+      return [];
+    }
+    return [{ ...CODEX_FAST_MODE_FEATURE, value: this.serviceTier === "fast" }];
   }
 
   async connect(): Promise<void> {
@@ -2495,6 +2527,9 @@ class CodexAppServerAgentSession implements AgentSession {
     if (thinkingOptionId) {
       params.effort = thinkingOptionId;
     }
+    if (this.serviceTier) {
+      params.serviceTier = this.serviceTier;
+    }
     if (this.resolvedCollaborationMode) {
       params.collaborationMode = {
         mode: this.resolvedCollaborationMode.mode,
@@ -2586,6 +2621,9 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     this.config.model = modelId ?? undefined;
+    if (!codexModelSupportsFastMode(this.config.model)) {
+      this.serviceTier = null;
+    }
     this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
     this.cachedRuntimeInfo = null;
   }
@@ -2594,6 +2632,15 @@ class CodexAppServerAgentSession implements AgentSession {
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(thinkingOptionId);
     this.resolvedCollaborationMode = this.resolveCollaborationMode(this.currentMode);
     this.cachedRuntimeInfo = null;
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId === "fast_mode") {
+      this.serviceTier = value ? "fast" : null;
+      this.cachedRuntimeInfo = null;
+      return;
+    }
+    throw new Error(`Unknown Codex feature: ${featureId}`);
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -3636,3 +3683,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     return true;
   }
 }
+
+export const __codexAppServerInternals = {
+  buildCodexAppServerEnv,
+  codexModelSupportsFastMode,
+  CodexAppServerAgentSession,
+  mapCodexPatchNotificationToToolCall,
+};
