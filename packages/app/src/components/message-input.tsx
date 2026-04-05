@@ -100,7 +100,7 @@ export interface MessageInputProps {
 export interface MessageInputRef {
   focus: () => void;
   blur: () => void;
-  runKeyboardAction: (action: MessageInputKeyboardActionKind) => void;
+  runKeyboardAction: (action: MessageInputKeyboardActionKind) => boolean;
   /**
    * Web-only: return the underlying DOM element for focus assertions/retries.
    * May return null if not mounted or on native.
@@ -242,26 +242,35 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     runKeyboardAction: (action) => {
       if (action === "focus") {
         textInputRef.current?.focus();
-        return;
+        return true;
+      }
+
+      if (action === "send" || action === "dictation-confirm") {
+        if (isDictatingRef.current) {
+          sendAfterTranscriptRef.current = true;
+          confirmDictation();
+          return true;
+        }
+        return false;
       }
 
       if (action === "voice-toggle") {
         handleToggleRealtimeVoiceShortcut();
-        return;
+        return true;
       }
 
       if (action === "voice-mute-toggle") {
         if (isRealtimeVoiceForCurrentAgent) {
           voice?.toggleMute();
         }
-        return;
+        return true;
       }
 
       if (action === "dictation-cancel") {
         if (isDictatingRef.current) {
           cancelDictation();
         }
-        return;
+        return true;
       }
 
       if (action === "dictation-toggle") {
@@ -271,7 +280,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
         } else {
           void startDictationIfAvailable();
         }
+        return true;
       }
+
+      return false;
     },
     getNativeElement: () => {
       if (!IS_WEB) return null;
