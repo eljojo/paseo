@@ -398,7 +398,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   commandText: {
     flex: 1,
-    fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
