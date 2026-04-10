@@ -10,7 +10,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Dimensions, Platform, Text, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ExternalLink, LoaderCircle, Play, Terminal } from "lucide-react-native";
+import { ExternalLink, Globe, LoaderCircle, Play, SquareTerminal } from "lucide-react-native";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { DiffStat } from "@/components/diff-stat";
 import { Pressable } from "react-native";
@@ -200,7 +200,7 @@ function getScriptHealthColor(input: {
   theme: ReturnType<typeof useUnistyles>["theme"];
 }): string {
   if (input.health === "healthy") {
-    return input.theme.colors.palette.green[500];
+    return input.theme.colors.palette.blue[500];
   }
   if (input.health === "unhealthy") {
     return input.theme.colors.palette.red[500];
@@ -349,7 +349,7 @@ function WorkspaceHoverCardContent({
             <>
               <View style={styles.separator} />
               <View style={styles.sectionLabelRow}>
-                <Terminal size={12} color={theme.colors.foregroundMuted} />
+                <Play size={12} color={theme.colors.foregroundMuted} fill="transparent" />
                 <Text style={styles.sectionLabel}>Scripts</Text>
               </View>
               <View style={styles.sectionList} testID="hover-card-script-list">
@@ -365,7 +365,7 @@ function WorkspaceHoverCardContent({
                       ? getScriptHealthColor({ health: script.health, theme })
                       : theme.colors.foregroundMuted;
                   } else if (isRunning) {
-                    dotColor = theme.colors.palette.green[500];
+                    dotColor = theme.colors.palette.blue[500];
                   } else if (exitCode === 0) {
                     dotColor = theme.colors.palette.green[500];
                   } else if (exitCode !== null) {
@@ -402,13 +402,21 @@ function WorkspaceHoverCardContent({
                     >
                       {({ hovered }) => (
                         <>
-                          <View
-                            testID={`hover-card-script-health-${script.scriptName}`}
-                            style={[
-                              styles.statusDot,
-                              { backgroundColor: dotColor },
-                            ]}
-                          />
+                          {isService ? (
+                            <Globe
+                              size={14}
+                              color={dotColor}
+                              testID={`hover-card-script-health-${script.scriptName}`}
+                              style={styles.scriptIcon}
+                            />
+                          ) : (
+                            <SquareTerminal
+                              size={14}
+                              color={dotColor}
+                              testID={`hover-card-script-health-${script.scriptName}`}
+                              style={styles.scriptIcon}
+                            />
+                          )}
                           <Text
                             style={[
                               styles.listRowLabel,
@@ -666,12 +674,8 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  scriptIcon: {
     flexShrink: 0,
-    marginLeft: 2,
   },
   checksSummaryRow: {
     flexDirection: "row",

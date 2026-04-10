@@ -37,7 +37,8 @@ import {
   FolderPlus,
   FolderGit2,
   GitPullRequest,
-  Terminal,
+  Globe,
+  SquareTerminal,
   Monitor,
   MoreVertical,
   Plus,
@@ -969,6 +970,9 @@ function WorkspaceRowInner({
 
   const isDesktop = !isTouchPlatform;
   const showScriptsIcon = isDesktop && workspace.hasRunningScripts;
+  const hasRunningService = workspace.scripts.some(
+    (s) => s.lifecycle === "running" && (s.type ?? "service") === "service",
+  );
 
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
@@ -1018,7 +1022,11 @@ function WorkspaceRowInner({
             <View style={styles.workspaceRowRight}>
               {showScriptsIcon ? (
                 <View testID="workspace-globe-icon" accessibilityLabel="Scripts available">
-                  <Terminal size={12} color={theme.colors.foregroundMuted} />
+                  {hasRunningService ? (
+                    <Globe size={12} color={theme.colors.palette.blue[500]} />
+                  ) : (
+                    <SquareTerminal size={12} color={theme.colors.palette.blue[500]} />
+                  )}
                 </View>
               ) : null}
               {isCreating ? <Text style={styles.workspaceCreatingText}>Creating...</Text> : null}

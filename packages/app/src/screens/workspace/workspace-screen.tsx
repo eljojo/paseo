@@ -2124,17 +2124,17 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
             }
             right={
               <View style={styles.headerRight}>
-                {!isMobile ? (
-                  <WorkspaceOpenInEditorButton
-                    serverId={normalizedServerId}
-                    cwd={normalizedWorkspaceId}
-                  />
-                ) : null}
                 {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
                   <WorkspaceScriptsButton
                     serverId={normalizedServerId}
                     workspaceId={normalizedWorkspaceId}
                     scripts={workspaceDescriptor.scripts}
+                  />
+                ) : null}
+                {!isMobile ? (
+                  <WorkspaceOpenInEditorButton
+                    serverId={normalizedServerId}
+                    cwd={normalizedWorkspaceId}
                   />
                 ) : null}
                 {!isMobile && isGitCheckout ? (

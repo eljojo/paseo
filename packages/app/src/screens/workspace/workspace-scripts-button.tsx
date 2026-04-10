@@ -1,7 +1,7 @@
 import { type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, LoaderCircle, Play, Terminal } from "lucide-react-native";
+import { ChevronDown, ExternalLink, Globe, LoaderCircle, Play, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -20,7 +20,7 @@ function getScriptHealthColor(
   theme: ReturnType<typeof useUnistyles>["theme"],
 ): string {
   if (health === "healthy") {
-    return theme.colors.palette.green[500];
+    return theme.colors.palette.blue[500];
   }
   if (health === "unhealthy") {
     return theme.colors.palette.red[500];
@@ -82,16 +82,16 @@ export function WorkspaceScriptsButton({
             accessibilityLabel="Workspace scripts"
           >
             <View style={styles.splitButtonContent}>
-              <Terminal size={14} color={theme.colors.foregroundMuted} />
+              <Play
+                size={14}
+                color={
+                  hasAnyRunning
+                    ? theme.colors.palette.blue[500]
+                    : theme.colors.foregroundMuted
+                }
+                fill="transparent"
+              />
               <Text style={styles.splitButtonText}>Scripts</Text>
-              {hasAnyRunning ? (
-                <View
-                  style={[
-                    styles.runningDot,
-                    { backgroundColor: theme.colors.palette.green[500] },
-                  ]}
-                />
-              ) : null}
               <ChevronDown size={14} color={theme.colors.foregroundMuted} />
             </View>
           </DropdownMenuTrigger>
@@ -114,7 +114,7 @@ export function WorkspaceScriptsButton({
                     ? getScriptHealthColor(script.health, theme)
                     : theme.colors.foregroundMuted;
                 } else if (isRunning) {
-                  dotColor = theme.colors.palette.green[500];
+                  dotColor = theme.colors.palette.blue[500];
                 } else if (exitCode === 0) {
                   dotColor = theme.colors.palette.green[500];
                 } else if (exitCode !== null) {
@@ -138,12 +138,11 @@ export function WorkspaceScriptsButton({
                   >
                     {({ hovered }) => (
                       <>
-                        <View
-                          style={[
-                            styles.statusDot,
-                            { backgroundColor: dotColor },
-                          ]}
-                        />
+                        {isService ? (
+                          <Globe size={14} color={dotColor} style={styles.scriptIcon} />
+                        ) : (
+                          <SquareTerminal size={14} color={dotColor} style={styles.scriptIcon} />
+                        )}
                         <Text
                           style={[
                             styles.scriptName,
@@ -274,11 +273,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[1.5],
   },
-  runningDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
   scriptList: {
     paddingVertical: theme.spacing[1],
   },
@@ -293,11 +287,7 @@ const styles = StyleSheet.create((theme) => ({
   scriptRowHovered: {
     backgroundColor: theme.colors.surface2,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginLeft: 2,
+  scriptIcon: {
     flexShrink: 0,
   },
   scriptName: {
