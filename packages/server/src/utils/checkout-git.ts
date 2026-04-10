@@ -2,7 +2,7 @@ import { exec, execFile } from "child_process";
 import { spawnProcess } from "./spawn.js";
 import { promisify } from "util";
 import { resolve, dirname, basename } from "path";
-import { realpathSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import { open as openFile, stat as statFile } from "fs/promises";
 import { TTLCache } from "@isaacs/ttlcache";
 import type { ParsedDiffFile } from "../server/utils/diff-highlighter.js";
@@ -828,6 +828,46 @@ async function hasOriginRemote(cwd: string): Promise<boolean> {
   return url !== null;
 }
 
+async function resolveAbsoluteGitDir(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync("git rev-parse --absolute-git-dir", {
+      cwd,
+      env: READ_ONLY_GIT_ENV,
+    });
+    const gitDir = stdout.trim();
+    return gitDir.length > 0 ? gitDir : null;
+  } catch {
+    return null;
+  }
+}
+
+async function abortGitPullConflictState(cwd: string): Promise<void> {
+  const gitDir = await resolveAbsoluteGitDir(cwd);
+  if (!gitDir) {
+    return;
+  }
+
+  const mergeHeadPath = resolve(gitDir, "MERGE_HEAD");
+  const rebaseMergePath = resolve(gitDir, "rebase-merge");
+  const rebaseApplyPath = resolve(gitDir, "rebase-apply");
+
+  if (existsSync(mergeHeadPath)) {
+    try {
+      await execAsync("git merge --abort", { cwd });
+    } catch {
+      // ignore
+    }
+  }
+
+  if (existsSync(rebaseMergePath) || existsSync(rebaseApplyPath)) {
+    try {
+      await execAsync("git rebase --abort", { cwd });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export async function resolveRepositoryDefaultBranch(repoRoot: string): Promise<string | null> {
   try {
     const { stdout } = await execAsync("git symbolic-ref --quiet refs/remotes/origin/HEAD", {
@@ -1463,6 +1503,13 @@ export async function getCheckoutDiff(
         continue;
       }
 
+      // `git diff -w --name-status` can still report a modified path even when the
+      // whitespace-filtered patch and numstat are both empty. Skip emitting a
+      // structured placeholder in that case so whitespace-only edits truly disappear.
+      if (ignoreWhitespace && !trackedDiffTruncated && stat === null) {
+        continue;
+      }
+
       structured.push({
         path: change.path,
         isNew: change.isNew,
@@ -1767,7 +1814,12 @@ export async function pullCurrentBranch(cwd: string): Promise<void> {
   if (!hasRemote) {
     throw new Error("Remote 'origin' is not configured.");
   }
-  await execAsync("git pull", { cwd });
+  try {
+    await execAsync("git pull", { cwd });
+  } catch (error) {
+    await abortGitPullConflictState(cwd);
+    throw error;
+  }
 }
 
 export async function pushCurrentBranch(cwd: string): Promise<void> {
