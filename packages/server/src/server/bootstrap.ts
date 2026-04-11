@@ -106,6 +106,7 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
+import { DaemonConfigStore } from "./daemon-config-store.js";
 import { createTerminalManager, type TerminalManager } from "../terminal/terminal-manager.js";
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -197,6 +198,13 @@ export async function createPaseoDaemon(
   const bootstrapStart = performance.now();
   const elapsed = () => `${(performance.now() - bootstrapStart).toFixed(0)}ms`;
   const daemonVersion = resolveDaemonVersion(import.meta.url);
+  const daemonConfigStore = new DaemonConfigStore(
+    config.paseoHome,
+    {
+      mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+    },
+    logger,
+  );
 
   try {
     const serverId = getOrCreateServerId(config.paseoHome, { logger });
@@ -549,6 +557,9 @@ export async function createPaseoDaemon(
             const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
             agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
             agentManager.setMcpBaseUrl(agentMcpBaseUrl);
+            daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
+              agentManager.setMcpBaseUrl(value ? mcpBaseUrl : null);
+            });
             const relayEnabled = config.relayEnabled ?? true;
             const relayEndpoint = config.relayEndpoint ?? "relay.paseo.sh:443";
             const relayPublicEndpoint = config.relayPublicEndpoint ?? relayEndpoint;
@@ -578,6 +589,7 @@ export async function createPaseoDaemon(
               agentStorage,
               downloadTokenStore,
               config.paseoHome,
+              daemonConfigStore,
               mcpBaseUrl,
               { allowedOrigins, allowedHosts: config.allowedHosts },
               speechService,
