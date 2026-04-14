@@ -37,6 +37,7 @@ import {
   AgentStatusEnum,
   ProviderSummarySchema,
   parseDurationString,
+  resolveProviderAndModel,
   sanitizePermissionRequest,
   setupFinishNotification,
   serializeSnapshotWithMetadata,
@@ -230,16 +231,36 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
-  const resolveNewAgentScheduleTarget = () => {
+  const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
+      const hasProviderOverride = params?.provider !== undefined;
+      const resolvedProviderModel = hasProviderOverride
+        ? resolveProviderAndModel({
+            provider: params?.provider,
+            defaultProvider: callerAgent.provider,
+          })
+        : null;
+      const resolvedProvider = resolvedProviderModel?.provider ?? callerAgent.provider;
       return {
         type: "new-agent" as const,
         config: {
-          provider: callerAgent.provider,
-          cwd: callerAgent.cwd,
-          ...(callerAgent.currentModeId ? { modeId: callerAgent.currentModeId } : {}),
-          ...(callerAgent.config.model ? { model: callerAgent.config.model } : {}),
+          provider: resolvedProvider,
+          cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
+          ...(callerAgent.currentModeId
+            ? {
+                modeId: mapModeAcrossProviders(
+                  callerAgent.currentModeId,
+                  callerAgent.provider,
+                  resolvedProvider,
+                ),
+              }
+            : {}),
+          ...(resolvedProviderModel?.model
+            ? { model: resolvedProviderModel.model }
+            : !hasProviderOverride && callerAgent.config.model
+              ? { model: callerAgent.config.model }
+              : {}),
           ...(callerAgent.config.thinkingOptionId
             ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
             : {}),
@@ -267,10 +288,17 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
 
     return {
       type: "new-agent" as const,
-      config: {
-        provider: "claude" as AgentProvider,
-        cwd: process.cwd(),
-      },
+      config: (() => {
+        const resolvedProviderModel = resolveProviderAndModel({
+          provider: params?.provider,
+          defaultProvider: "claude",
+        });
+        return {
+          provider: resolvedProviderModel.provider,
+          cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
+          ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+        };
+      })(),
     };
   };
   const agentToAgentInputSchema = {
@@ -1181,12 +1209,16 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         cron: z.string().optional(),
         name: z.string().optional(),
         target: z.enum(["self", "new-agent"]).optional(),
+        provider: AgentProviderEnum.optional().describe(
+          "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
+        ),
+        cwd: z.string().optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, every, cron, name, target, maxRuns, expiresIn }) => {
+    async ({ prompt, every, cron, name, target, provider, cwd, maxRuns, expiresIn }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -1202,9 +1234,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
               if (!callerAgentId) {
                 throw new Error("target=self requires a caller agent");
               }
+              if (provider !== undefined || cwd !== undefined) {
+                throw new Error("provider and cwd can only be used with target=new-agent");
+              }
               return { type: "agent" as const, agentId: callerAgentId };
             })()
-          : resolveNewAgentScheduleTarget();
+          : resolveNewAgentScheduleTarget({ provider, cwd });
 
       const schedule = await scheduleService.create({
         prompt: prompt.trim(),

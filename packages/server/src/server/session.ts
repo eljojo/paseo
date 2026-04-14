@@ -335,6 +335,42 @@ type FetchWorkspacesCursor = {
   id: string;
 };
 
+function summarizeFetchWorkspacesEntries(entries: Iterable<FetchWorkspacesResponseEntry>): {
+  count: number;
+  projectIds: string[];
+  statusCounts: Record<string, number>;
+  workspaces: Array<{
+    id: string;
+    projectId: string;
+    projectDisplayName: string;
+    name: string;
+    status: FetchWorkspacesResponseEntry["status"];
+    workspaceKind: FetchWorkspacesResponseEntry["workspaceKind"];
+    activityAt: string | null;
+  }>;
+} {
+  const workspaces = Array.from(entries, (entry) => ({
+    id: entry.id,
+    projectId: entry.projectId,
+    projectDisplayName: entry.projectDisplayName,
+    name: entry.name,
+    status: entry.status,
+    workspaceKind: entry.workspaceKind,
+    activityAt: entry.activityAt,
+  }));
+  const statusCounts = new Map<string, number>();
+  for (const workspace of workspaces) {
+    statusCounts.set(workspace.status, (statusCounts.get(workspace.status) ?? 0) + 1);
+  }
+
+  return {
+    count: workspaces.length,
+    projectIds: [...new Set(workspaces.map((workspace) => workspace.projectId))],
+    statusCounts: Object.fromEntries(statusCounts),
+    workspaces,
+  };
+}
+
 class SessionRequestError extends Error {
   constructor(
     readonly code: string,
@@ -5730,7 +5766,9 @@ export class Session {
     const filter = request.filter;
     const sort = this.normalizeFetchWorkspacesSort(request.sort);
     let entries = await this.listWorkspaceDescriptors();
+    const listedCount = entries.length;
     entries = entries.filter((workspace) => this.matchesWorkspaceFilter({ workspace, filter }));
+    const filteredCount = entries.length;
     entries.sort((left, right) => this.compareFetchWorkspacesEntries(left, right, sort));
 
     const cursorToken = request.page?.cursor;
@@ -5748,6 +5786,21 @@ export class Session {
       hasMore && pagedEntries.length > 0
         ? this.encodeFetchWorkspacesCursor(pagedEntries[pagedEntries.length - 1], sort)
         : null;
+
+    this.sessionLogger.debug(
+      {
+        requestId: request.requestId,
+        filter: request.filter ?? null,
+        sort,
+        page: request.page ?? null,
+        listedCount,
+        filteredCount,
+        returnedCount: pagedEntries.length,
+        hasMore,
+        nextCursor,
+      },
+      "fetch_workspaces_entries_listed",
+    );
 
     return {
       entries: pagedEntries,
@@ -6031,6 +6084,16 @@ export class Session {
       : null;
 
     try {
+      this.sessionLogger.debug(
+        {
+          requestId: request.requestId,
+          subscribeRequested: Boolean(request.subscribe),
+          filter: request.filter ?? null,
+          sort: request.sort ?? null,
+          page: request.page ?? null,
+        },
+        "fetch_workspaces_request_received",
+      );
       if (subscriptionId) {
         this.workspaceUpdatesSubscription = {
           subscriptionId,
@@ -6042,6 +6105,15 @@ export class Session {
       }
 
       const payload = await this.listFetchWorkspacesEntries(request);
+      this.sessionLogger.debug(
+        {
+          requestId: request.requestId,
+          subscriptionId,
+          pageInfo: payload.pageInfo,
+          payload: summarizeFetchWorkspacesEntries(payload.entries),
+        },
+        "fetch_workspaces_response_ready",
+      );
       const snapshotLatestActivityByWorkspaceId = new Map<string, number>();
       for (const entry of payload.entries) {
         const parsedLatestActivity = entry.activityAt

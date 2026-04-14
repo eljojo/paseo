@@ -53,6 +53,7 @@ import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { isNative } from "@/constants/platform";
+import { summarizeWorkspaceCollection } from "@/utils/workspace-fetch-debug";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -333,10 +334,23 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       let includeSubscribe = options?.subscribe ?? false;
 
       while (true) {
+        console.log("[WorkspaceFetch][hydrate] request", {
+          serverId,
+          cursor,
+          includeSubscribe,
+          existingWorkspaces: summarizeWorkspaceCollection(existingWorkspaces?.values()),
+        });
         const payload = await client.fetchWorkspaces({
           sort: [{ key: "activity_at", direction: "desc" }],
           ...(includeSubscribe ? { subscribe: {} } : {}),
           page: cursor ? { limit: 200, cursor } : { limit: 200 },
+        });
+        console.log("[WorkspaceFetch][hydrate] response", {
+          serverId,
+          cursor,
+          includeSubscribe,
+          pageInfo: payload.pageInfo,
+          payload: summarizeWorkspaceCollection(payload.entries),
         });
         if (options?.isCancelled?.()) {
           return;
@@ -366,6 +380,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
       setWorkspaces(serverId, workspaces);
       setHasHydratedWorkspaces(serverId, true);
+      console.log("[WorkspaceFetch][hydrate] applied", {
+        serverId,
+        subscribed: options?.subscribe ?? false,
+        nextWorkspaces: summarizeWorkspaceCollection(workspaces.values()),
+      });
     },
     [client, isConnected, serverId, setHasHydratedWorkspaces, setWorkspaces],
   );
@@ -1153,10 +1172,23 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     const unsubWorkspaceUpdate = client.on("workspace_update", (message) => {
       if (message.type !== "workspace_update") return;
       if (message.payload.kind === "remove") {
+        console.log("[WorkspaceFetch][update] remove", {
+          serverId,
+          workspaceId: message.payload.id,
+        });
         removeWorkspace(serverId, message.payload.id);
         return;
       }
-      mergeWorkspaces(serverId, [normalizeWorkspaceDescriptor(message.payload.workspace)]);
+      const workspace = normalizeWorkspaceDescriptor(message.payload.workspace);
+      const existingWorkspace = useSessionStore
+        .getState()
+        .sessions[serverId]?.workspaces.get(workspace.id);
+      console.log("[WorkspaceFetch][update] upsert", {
+        serverId,
+        existedInStore: Boolean(existingWorkspace),
+        workspace: summarizeWorkspaceCollection([workspace]),
+      });
+      mergeWorkspaces(serverId, [workspace]);
     });
 
     const unsubStatus = client.on("status", (message) => {

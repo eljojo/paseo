@@ -7,6 +7,7 @@ import { curateAgentActivity } from "./activity-curator.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { serializeAgentSnapshot } from "../messages.js";
 import { StoredScheduleSchema } from "../schedule/types.js";
+import type { AgentProvider } from "./agent-sdk-types.js";
 
 export const AgentProviderEnum = z.string();
 
@@ -47,6 +48,49 @@ export const AgentModelSchema = z.object({
 
 // 30 seconds - surface friendly message before SDK tool timeout (~60s)
 export const AGENT_WAIT_TIMEOUT_MS = 30000;
+
+export interface ResolvedProviderModel {
+  provider: AgentProvider;
+  model: string | undefined;
+}
+
+export function resolveProviderAndModel(params: {
+  provider?: string;
+  model?: string;
+  defaultProvider: AgentProvider;
+}): ResolvedProviderModel {
+  const providerInput = params.provider?.trim() || params.defaultProvider;
+  const modelInput = params.model?.trim();
+
+  if (params.model !== undefined && !modelInput) {
+    throw new Error("model cannot be empty");
+  }
+
+  const slashIndex = providerInput.indexOf("/");
+  if (slashIndex === -1) {
+    return {
+      provider: providerInput as AgentProvider,
+      model: modelInput,
+    };
+  }
+
+  const provider = providerInput.slice(0, slashIndex).trim();
+  const modelFromProvider = providerInput.slice(slashIndex + 1).trim();
+  if (!provider || !modelFromProvider) {
+    throw new Error("provider must be <provider> or <provider>/<model>");
+  }
+
+  if (modelInput && modelInput !== modelFromProvider) {
+    throw new Error(
+      `Conflicting model values provided: provider specifies ${modelFromProvider}, but model specifies ${modelInput}`,
+    );
+  }
+
+  return {
+    provider: provider as AgentProvider,
+    model: modelInput ?? modelFromProvider,
+  };
+}
 
 export type StartAgentRunOptions = {
   replaceRunning?: boolean;

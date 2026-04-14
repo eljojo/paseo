@@ -55,6 +55,7 @@ import {
   AgentStatusEnum,
   ProviderSummarySchema,
   parseDurationString,
+  resolveProviderAndModel,
   sanitizePermissionRequest,
   serializeSnapshotWithMetadata,
   startAgentRun,
@@ -81,13 +82,20 @@ export async function createAgentManagementMcpServer(
     component: "agent-management-mcp",
   });
   const waitTracker = new WaitForAgentTracker(logger);
-  const resolveNewAgentScheduleTarget = (params?: { provider?: AgentProvider; cwd?: string }) => ({
-    type: "new-agent" as const,
-    config: {
-      provider: params?.provider ?? ("claude" as AgentProvider),
-      cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
-    },
-  });
+  const resolveNewAgentScheduleTarget = (params?: { provider?: string; cwd?: string }) => {
+    const resolvedProviderModel = resolveProviderAndModel({
+      provider: params?.provider,
+      defaultProvider: "claude",
+    });
+    return {
+      type: "new-agent" as const,
+      config: {
+        provider: resolvedProviderModel.provider,
+        cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
+        ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
+      },
+    };
+  };
 
   const server = new McpServer({
     name: "paseo-agent-management",
@@ -656,7 +664,9 @@ export async function createAgentManagementMcpServer(
         cron: z.string().optional(),
         name: z.string().optional(),
         target: z.enum(["self", "new-agent"]).optional(),
-        provider: AgentProviderEnum.optional(),
+        provider: AgentProviderEnum.optional().describe(
+          "Provider, or provider/model (for example: codex or codex/gpt-5.4).",
+        ),
         cwd: z.string().optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
