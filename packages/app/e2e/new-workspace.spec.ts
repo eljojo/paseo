@@ -161,6 +161,11 @@ test.describe("New workspace flow", () => {
       const agentTabs = page.locator('[data-testid^="workspace-tab-agent_"]');
       await expect(agentTabs).toHaveCount(1, { timeout: 30_000 });
 
+      // Workspace setup may auto-open a setup tab that steals focus,
+      // hiding the agent panel (display:none removes it from the
+      // accessibility tree). Click the agent tab to ensure it's active.
+      await agentTabs.first().click();
+
       const composer = page.getByRole("textbox", { name: "Message agent..." });
       await expect(composer).toBeEditable({ timeout: 30_000 });
     } finally {
