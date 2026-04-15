@@ -137,4 +137,37 @@ describe("submitAgentInput", () => {
     expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
     expect(clearDraft).not.toHaveBeenCalled();
   });
+
+  it("submits when empty submit is explicitly allowed", async () => {
+    const queueMessage = vi.fn();
+    const submitMessage = vi.fn(async () => {});
+    const clearDraft = vi.fn();
+    const setUserInput = vi.fn();
+    const setSelectedImages = vi.fn();
+    const setSendError = vi.fn();
+    const setIsProcessing = vi.fn();
+
+    await expect(
+      submitAgentInput({
+        message: "   ",
+        allowEmptySubmit: true,
+        isAgentRunning: false,
+        canSubmit: true,
+        queueMessage,
+        submitMessage,
+        clearDraft,
+        setUserInput,
+        setSelectedImages,
+        setSendError,
+        setIsProcessing,
+      }),
+    ).resolves.toBe("submitted");
+
+    expect(queueMessage).not.toHaveBeenCalled();
+    expect(submitMessage).toHaveBeenCalledWith({
+      message: "",
+      imageAttachments: undefined,
+    });
+    expect(clearDraft).toHaveBeenCalledWith("sent");
+  });
 });

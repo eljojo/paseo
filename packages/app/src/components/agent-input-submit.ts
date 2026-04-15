@@ -4,6 +4,7 @@ export interface AgentInputSubmitActionInput<TImage> {
   message: string;
   imageAttachments?: TImage[];
   hasExternalContent?: boolean;
+  allowEmptySubmit?: boolean;
   forceSend?: boolean;
   isAgentRunning: boolean;
   canSubmit: boolean;
@@ -23,7 +24,12 @@ export async function submitAgentInput<TImage>(
   const trimmedMessage = input.message.trim();
   const imageAttachments = input.imageAttachments;
 
-  if (!trimmedMessage && !imageAttachments?.length && !input.hasExternalContent) {
+  if (
+    !trimmedMessage &&
+    !imageAttachments?.length &&
+    !input.hasExternalContent &&
+    !input.allowEmptySubmit
+  ) {
     return "noop";
   }
 
