@@ -424,12 +424,7 @@ function ControlledStatusBar({
 
           {thinkingOptions && thinkingOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`thinking-${openSelector === "thinking" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={thinkingAnchorRef}
@@ -470,12 +465,7 @@ function ControlledStatusBar({
 
           {modeOptions && modeOptions.length > 0 ? (
             <>
-              <Tooltip
-                key={`mode-${openSelector === "mode" ? "open" : "closed"}`}
-                delayDuration={0}
-                enabledOnDesktop
-                enabledOnMobile={false}
-              >
+              <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
                 <TooltipTrigger asChild triggerRefProp="ref">
                   <Pressable
                     ref={modeAnchorRef}
