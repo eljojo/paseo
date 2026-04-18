@@ -2494,22 +2494,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     flexShrink: 0,
   },
-  diffStatRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
-  },
-  diffStatAdditions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffAddition,
-  },
-  diffStatDeletions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffDeletion,
-  },
   kebabButton: {
     padding: 2,
     borderRadius: 4,

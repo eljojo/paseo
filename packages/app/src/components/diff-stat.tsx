@@ -6,11 +6,20 @@ interface DiffStatProps {
   deletions: number;
 }
 
+const compactFormatter = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+export function formatDiffCount(value: number): string {
+  return compactFormatter.format(value).toLowerCase();
+}
+
 export function DiffStat({ additions, deletions }: DiffStatProps) {
   return (
     <View style={styles.row}>
-      <Text style={styles.additions}>+{additions.toLocaleString()}</Text>
-      <Text style={styles.deletions}>-{deletions.toLocaleString()}</Text>
+      <Text style={styles.additions}>+{formatDiffCount(additions)}</Text>
+      <Text style={styles.deletions}>-{formatDiffCount(deletions)}</Text>
     </View>
   );
 }
@@ -25,11 +34,11 @@ const styles = StyleSheet.create((theme) => ({
   additions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.green[400],
+    color: theme.colors.diffAddition,
   },
   deletions: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.normal,
-    color: theme.colors.palette.red[500],
+    color: theme.colors.diffDeletion,
   },
 }));

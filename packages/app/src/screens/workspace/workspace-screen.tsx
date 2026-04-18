@@ -2192,14 +2192,10 @@ function WorkspaceScreenContent({ serverId, workspaceId }: WorkspaceScreenProps)
                                     color={iconColor}
                                   />
                                   {workspaceDescriptor?.diffStat ? (
-                                    <View style={styles.diffStatRow}>
-                                      <Text style={styles.diffStatAdditions}>
-                                        +{workspaceDescriptor.diffStat.additions}
-                                      </Text>
-                                      <Text style={styles.diffStatDeletions}>
-                                        -{workspaceDescriptor.diffStat.deletions}
-                                      </Text>
-                                    </View>
+                                    <DiffStat
+                                      additions={workspaceDescriptor.diffStat.additions}
+                                      deletions={workspaceDescriptor.diffStat.deletions}
+                                    />
                                   ) : null}
                                 </>
                               );
@@ -2492,22 +2488,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   sourceControlButtonHovered: {
     backgroundColor: theme.colors.surface2,
-  },
-  diffStatRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flexShrink: 0,
-  },
-  diffStatAdditions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffAddition,
-  },
-  diffStatDeletions: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
-    color: theme.colors.diffDeletion,
   },
   newTabActions: {
     flexDirection: "row",
