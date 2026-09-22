@@ -81,7 +81,7 @@ Workspaces decide where work happens; agent parentage decides who owns the work.
 - A top-level MCP caller without a workspace gets a new local workspace.
 - Create a workspace first when you need worktree isolation, a specific branch, or a pull request checkout.
 
-MCP does not expose an agent-detach tool. Detaching is a manual user action in the app or CLI.
+`create_agent` takes `detached` for an agent that should not be yours: it stays out of your subagent track and survives your own archiving, at the cost of the finish notification, which is only delivered to a parent. Detaching an agent that already exists is still a manual user action in the app or CLI.
 
 ## Tools
 
@@ -89,7 +89,7 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 
 | Tool                 | Function                                                                                                                                                                                                                                                                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`. Use `initialPrompt` to start work; returns without waiting for completion. `background: true` hides it from tabs, default lists, your subagent track and notifications; you still get its finish notification. Omission inherits your own value. |
+| `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`, or `detached` to create a sibling rather than a subagent. Use `initialPrompt` to start work; returns without waiting for completion. `background: true` hides it from tabs, default lists, your subagent track and notifications; you still get its finish notification. Omission inherits your own value. |
 | `send_agent_prompt`  | Send a prompt using `agentId` and `prompt`; returns without waiting for completion.                                                                                                                                                                                                                                                  |
 | `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                                                                                                                                                                                                             |
 | `list_agents`        | List recent agents as compact metadata; `includeBackground: true` includes background work.                                                                                                                                                                                                                                          |
