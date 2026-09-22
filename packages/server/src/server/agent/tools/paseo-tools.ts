@@ -2668,6 +2668,43 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "list_heartbeats",
+    {
+      title: "List heartbeats",
+      description:
+        "List the recurring prompts the daemon delivers into existing agents, including the ones this session armed on itself. Use the id with inspect_schedule for run history, or delete_heartbeat to stop one.",
+      inputSchema: {
+        agentId: z
+          .string()
+          .optional()
+          .describe(
+            "Only heartbeats firing into this agent. Omit for every heartbeat on the host.",
+          ),
+      },
+      outputSchema: {
+        heartbeats: z.array(ScheduleSummarySchema),
+      },
+    },
+    async ({ agentId }) => {
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+
+      const heartbeats = (await scheduleService.list())
+        .filter(
+          (schedule) =>
+            schedule.target.type === "agent" &&
+            (agentId === undefined || schedule.target.agentId === agentId),
+        )
+        .map((schedule) => toScheduleSummary(schedule));
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ heartbeats }),
+      };
+    },
+  );
+
+  registerTool(
     "inspect_schedule",
     {
       title: "Inspect schedule",

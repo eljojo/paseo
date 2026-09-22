@@ -4090,6 +4090,76 @@ describe("rename_workspace MCP tool", () => {
   });
 });
 
+describe("list_heartbeats MCP tool", () => {
+  const logger = createTestLogger();
+
+  function heartbeatFor(agentId: string, id: string): StoredSchedule {
+    return {
+      ...createStoredSchedule({
+        prompt: "keep going",
+        cadence: { type: "cron", expression: "*/10 * * * *" },
+        target: { type: "agent", agentId },
+      }),
+      id,
+    };
+  }
+
+  function newAgentSchedule(): StoredSchedule {
+    return createStoredSchedule({
+      prompt: "nightly sweep",
+      cadence: { type: "cron", expression: "0 3 * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: "/tmp" },
+      },
+    });
+  }
+
+  async function serverListing(schedules: StoredSchedule[]) {
+    const { agentManager, agentStorage } = createTestDeps();
+    const list = vi.fn(async () => schedules);
+    return createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { list } as unknown as ScheduleService,
+      logger,
+    });
+  }
+
+  it("returns heartbeats, which list_schedules filters out", async () => {
+    const agentA = "11111111-1111-4111-8111-111111111111";
+    const schedules = [heartbeatFor(agentA, "hb-1"), newAgentSchedule()];
+    const server = await serverListing(schedules);
+
+    const heartbeats = await registeredTool(server, "list_heartbeats").handler({});
+    const listed = await registeredTool(server, "list_schedules").handler({});
+
+    expect(heartbeats.structuredContent.heartbeats).toHaveLength(1);
+    expect(heartbeats.structuredContent.heartbeats[0]).toMatchObject({
+      id: "hb-1",
+      target: { type: "agent", agentId: agentA },
+    });
+    expect(listed.structuredContent.schedules).toHaveLength(1);
+    expect(listed.structuredContent.schedules[0].target.type).toBe("new-agent");
+  });
+
+  it("narrows to one agent's heartbeats when asked", async () => {
+    const agentA = "11111111-1111-4111-8111-111111111111";
+    const agentB = "22222222-2222-4222-8222-222222222222";
+    const server = await serverListing([
+      heartbeatFor(agentA, "hb-1"),
+      heartbeatFor(agentB, "hb-2"),
+    ]);
+
+    const mine = await registeredTool(server, "list_heartbeats").handler({ agentId: agentB });
+
+    expect(mine.structuredContent.heartbeats.map((entry: { id: string }) => entry.id)).toEqual([
+      "hb-2",
+    ]);
+  });
+});
+
 describe("create_schedule MCP tool", () => {
   const logger = createTestLogger();
 
