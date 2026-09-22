@@ -149,9 +149,10 @@ Both use the same cron engine, but they have deliberately different interfaces.
 | `run_schedule_once` | Start one new-agent schedule run without changing its cron.                  |
 | `delete_schedule`   | Delete a new-agent schedule permanently.                                     |
 | `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                  |
+| `list_heartbeats`   | List the heartbeats firing into agents on this host, optionally one agent's. |
 | `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
 
-MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+`list_heartbeats` returns the same summary shape as `list_schedules`, so an id from it works with `inspect_schedule` for run history. MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
 ### Agent profiles
 
