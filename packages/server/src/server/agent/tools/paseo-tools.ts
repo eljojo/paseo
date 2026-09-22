@@ -1025,6 +1025,15 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    // No .default(false): the outer input schema materializes defaults before the
+    // legacy placement branch re-parses the same args under a strict schema, and
+    // a key it does not know is a hard error there.
+    detached: z
+      .boolean()
+      .optional()
+      .describe(
+        "Create a sibling instead of your subagent: it does not appear in your subagent track, and archiving you does not archive it. Use it for work that must outlive this session — a supervisor starting the agent it supervises. You are not notified when it finishes.",
+      ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1415,7 +1424,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create agent",
       description:
-        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
+        "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent; pass detached to create a sibling that survives your own archiving instead. Top-level creation without workspaceId creates a new local workspace. Requires provider/model (for example codex/gpt-5.4) and an initial prompt. Do not guess; call list_providers and list_models first if uncertain.",
       inputSchema: createAgentInputSchema,
       outputSchema: {
         agentId: z.string(),
@@ -1582,7 +1591,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         kind: "agent-scoped",
         parsedArgs: parsed,
-        detached: false,
+        detached: parsed.detached ?? false,
         cwd,
         workspaceId,
         worktree: undefined,

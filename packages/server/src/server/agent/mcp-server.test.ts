@@ -3413,6 +3413,55 @@ describe("create_agent MCP tool", () => {
     }
   });
 
+  it("omits the parent label when an agent-scoped create asks to be detached", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-detached-create-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        {
+          workspaceId: "wks_parent",
+        },
+      );
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "create_agent");
+
+      const sibling = await tool.handler({
+        title: "Sibling",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Outlive me",
+        detached: true,
+      });
+      const child = await tool.handler({
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+      });
+
+      const siblingId = z.object({ agentId: z.string() }).parse(sibling.structuredContent).agentId;
+      const childId = z.object({ agentId: z.string() }).parse(child.structuredContent).agentId;
+
+      expect((await storage.get(siblingId))?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+      expect((await storage.get(childId))?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
   it("delegates MCP injection to AgentManager and passes through an undefined agent ID", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.createAgent.mockResolvedValue({
