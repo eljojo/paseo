@@ -4914,6 +4914,62 @@ describe("provider listing MCP tool", () => {
     expect(modelVisibleText).toContain('"providers"');
   });
 
+  it("returns plan usage windows and passes forceRefresh through", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const provStub = createProviderSnapshotManagerStub();
+    const usage = {
+      fetchedAt: "2026-09-22T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          status: "available" as const,
+          planLabel: "Max",
+          windows: [
+            {
+              id: "five_hour",
+              label: "Session",
+              usedPct: 34,
+              remainingPct: 66,
+              resetsAt: "2026-09-22T07:20:00.000Z",
+              tone: "ok" as const,
+            },
+          ],
+        },
+      ],
+    };
+    const listUsage = vi.fn().mockResolvedValue(usage);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: provStub.manager,
+      providerUsage: () => ({ listUsage }),
+      logger,
+    });
+    const tool = registeredTool(server, "list_provider_usage");
+
+    const response = await tool.handler({ forceRefresh: true });
+
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: true });
+    expect(response.structuredContent).toEqual(usage);
+  });
+
+  it("says so rather than reporting zero usage when no service is wired", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const provStub = createProviderSnapshotManagerStub();
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: provStub.manager,
+      logger,
+    });
+    const tool = registeredTool(server, "list_provider_usage");
+
+    await expect(tool.handler({})).rejects.toThrow(/no usage service/);
+  });
+
   it("returns provider modes from the shared snapshot catalog", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const provStub = createProviderSnapshotManagerStub();

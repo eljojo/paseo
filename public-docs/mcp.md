@@ -175,11 +175,14 @@ Omit absent optional settings. If no profile fits, use provider discovery to cho
 
 ### Providers
 
-| Tool               | Function                                                          |
-| ------------------ | ----------------------------------------------------------------- |
-| `list_providers`   | List configured agent providers, availability, and modes.         |
-| `list_models`      | List models for an agent provider.                                |
-| `inspect_provider` | Inspect compact provider capabilities and draft feature settings. |
+| Tool                  | Function                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `list_providers`      | List configured agent providers, availability, and modes.                                                          |
+| `list_models`         | List models for an agent provider.                                                                                 |
+| `inspect_provider`    | Inspect compact provider capabilities and draft feature settings.                                                  |
+| `list_provider_usage` | List plan usage limits per provider: how much of each window is spent, when it resets, and the plan it belongs to. |
+
+Plan usage is account-wide, not per-agent: every session on the account draws down the same windows, so it answers how much headroom is left before launching more agents, never what one agent has spent. Readings are cached for five minutes; `forceRefresh` asks each provider again and costs one upstream request per provider.
 
 ### Permissions
 

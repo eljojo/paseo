@@ -4,7 +4,7 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
-import { AgentProfileSchema } from "@getpaseo/protocol/messages";
+import { AgentProfileSchema, ProviderUsageSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import {
   AgentFeatureSchema,
@@ -47,6 +47,7 @@ import {
   type UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
+import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
@@ -102,6 +103,12 @@ export interface PaseoToolHostDependencies {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
+  /**
+   * Resolver for the daemon's plan-usage service. A resolver rather than the
+   * service itself: it is owned by the WebSocket server, which is constructed
+   * after these dependencies are assembled.
+   */
+  providerUsage?: () => Pick<ProviderUsageService, "listUsage"> | null;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   github?: ForgeService;
   workspaceGitService?: Pick<
@@ -3010,6 +3017,42 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           modes: summary.modes,
           selectedModel: selectedModel ?? null,
           features,
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "list_provider_usage",
+    {
+      title: "List provider plan usage",
+      description:
+        "Plan usage limits for the providers configured on this host: how much of each window is spent, when it resets, and the plan it belongs to. Account-wide and not per-agent — every session on the account draws down the same windows.",
+      inputSchema: {
+        forceRefresh: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Bypass the daemon's cache and ask each provider now. Costs one upstream request per provider; leave false unless a stale reading would change the decision.",
+          ),
+      },
+      outputSchema: {
+        fetchedAt: z.string(),
+        providers: z.array(ProviderUsageSchema),
+      },
+    },
+    async ({ forceRefresh = false }) => {
+      const service = options.providerUsage?.();
+      if (!service) {
+        throw new Error("Provider usage is unavailable: the daemon exposes no usage service");
+      }
+      const usage = await service.listUsage({ forceRefresh });
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          fetchedAt: usage.fetchedAt,
+          providers: usage.providers,
         }),
       };
     },
