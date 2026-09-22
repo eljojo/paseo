@@ -137,22 +137,24 @@ See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` confi
 
 Both use the same cron engine, but they have deliberately different interfaces.
 
-| Tool                | Function                                                                     |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                 |
-| `list_schedules`    | List new-agent schedules managed by the daemon.                              |
-| `inspect_schedule`  | Inspect a schedule and its run history.                                      |
-| `pause_schedule`    | Pause an active schedule.                                                    |
-| `resume_schedule`   | Resume a paused schedule.                                                    |
-| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings. |
-| `schedule_logs`     | Return recent runs and output for a schedule.                                |
-| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                  |
-| `delete_schedule`   | Delete a new-agent schedule permanently.                                     |
-| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                  |
-| `list_heartbeats`   | List the heartbeats firing into agents on this host, optionally one agent's. |
-| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                |
+| Tool                | Function                                                                      |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                  |
+| `list_schedules`    | List new-agent schedules managed by the daemon.                               |
+| `inspect_schedule`  | Inspect a schedule and its run history.                                       |
+| `pause_schedule`    | Pause an active schedule.                                                     |
+| `resume_schedule`   | Resume a paused schedule.                                                     |
+| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings.  |
+| `schedule_logs`     | Return recent runs and output for a schedule.                                 |
+| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                   |
+| `delete_schedule`   | Delete a new-agent schedule permanently.                                      |
+| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                   |
+| `list_heartbeats`   | List the heartbeats firing into agents on this host, optionally one agent's.  |
+| `inspect_heartbeat` | Inspect one heartbeat and its run history.                                    |
+| `heartbeat_logs`    | Return one heartbeat's runs: when it fired, and why a fire was not delivered. |
+| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                 |
 
-`list_heartbeats` returns the same summary shape as `list_schedules`, so an id from it works with `inspect_schedule` for run history. MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+`list_heartbeats` returns the same summary shape as `list_schedules`, and heartbeat ids are inspected with `inspect_heartbeat` and `heartbeat_logs` — the schedule verbs reject them, because every verb in this section is scoped to one target type. A fire that finds its target agent mid-run is refused and recorded as a failed run, and a failed run still counts against `maxRuns`: a heartbeat armed on a busy session can exhaust its budget without ever delivering a prompt. MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
 ### Agent profiles
 
