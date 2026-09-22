@@ -4485,6 +4485,16 @@ class ClaudeAgentSession implements AgentSession {
     };
   }
 
+  private createClaudeModeDowngradedNotice(
+    requestedMode: PermissionMode,
+    appliedMode: PermissionMode,
+  ): AgentTimelineItem {
+    return {
+      type: "assistant_message",
+      text: `Claude started in permission mode '${appliedMode}', not the requested '${requestedMode}'.`,
+    };
+  }
+
   private captureSessionIdFromMessage(message: SDKMessage): {
     threadStartedSessionId: string | null;
     notice: AgentTimelineItem | null;
@@ -4567,7 +4577,26 @@ class ClaudeAgentSession implements AgentSession {
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
     this.availableModes = DEFAULT_MODES;
+    // Claude Code answers init with the mode it actually took, which is not
+    // always the one it was launched with: a mode it cannot honour is
+    // downgraded rather than refused. Adopting that silently makes the agent
+    // report a state nobody asked for — an unattended run launched in `auto`
+    // comes up prompting, strands on its first tool call, and the status says
+    // it was meant to. Keep adopting it, since it is the truth of the session,
+    // but say so.
+    const requestedMode = this.currentMode;
     this.currentMode = message.permissionMode;
+    if (this.currentMode !== requestedMode) {
+      this.logger.warn(
+        { requestedMode, appliedMode: this.currentMode },
+        "Claude applied a different permission mode than the one requested",
+      );
+      this.pushEvent({
+        type: "timeline",
+        provider: "claude",
+        item: this.createClaudeModeDowngradedNotice(requestedMode, this.currentMode),
+      });
+    }
     if (this.currentMode !== "plan") {
       this.planResumeMode = this.currentMode;
     }
