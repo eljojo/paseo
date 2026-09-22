@@ -4144,6 +4144,31 @@ describe("list_heartbeats MCP tool", () => {
     expect(listed.structuredContent.schedules[0].target.type).toBe("new-agent");
   });
 
+  it("inspects a heartbeat id that inspect_schedule refuses", async () => {
+    const agentA = "11111111-1111-4111-8111-111111111111";
+    const heartbeat = heartbeatFor(agentA, "hb-1");
+    const { agentManager, agentStorage } = createTestDeps();
+    const inspect = vi.fn(async () => heartbeat);
+    const logs = vi.fn(async () => heartbeat.runs);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { inspect, logs } as unknown as ScheduleService,
+      logger,
+    });
+
+    const inspected = await registeredTool(server, "inspect_heartbeat").handler({ id: "hb-1" });
+
+    expect(inspected.structuredContent).toMatchObject({ id: "hb-1" });
+    await expect(
+      registeredTool(server, "inspect_schedule").handler({ id: "hb-1" }),
+    ).rejects.toThrow("Schedule not found: hb-1");
+    await expect(
+      registeredTool(server, "heartbeat_logs").handler({ id: "hb-1" }),
+    ).resolves.toBeDefined();
+  });
+
   it("narrows to one agent's heartbeats when asked", async () => {
     const agentA = "11111111-1111-4111-8111-111111111111";
     const agentB = "22222222-2222-4222-8222-222222222222";

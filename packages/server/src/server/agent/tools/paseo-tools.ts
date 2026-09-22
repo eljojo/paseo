@@ -2573,6 +2573,53 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   );
 
   registerTool(
+    "inspect_heartbeat",
+    {
+      title: "Inspect heartbeat",
+      description:
+        "Inspect one heartbeat and its run history. A fire that found its target busy is recorded here as a failed run — and it still counts against maxRuns.",
+      inputSchema: {
+        id: z.string(),
+      },
+      outputSchema: StoredScheduleSchema.shape,
+    },
+    async ({ id }) => {
+      const heartbeat = await requireScheduleTarget(id, "agent");
+      return {
+        content: [],
+        structuredContent: ensureValidJson(heartbeat),
+      };
+    },
+  );
+
+  registerTool(
+    "heartbeat_logs",
+    {
+      title: "Heartbeat logs",
+      description:
+        "Return the run history for one heartbeat: when it fired, whether it was delivered, and why it was not.",
+      inputSchema: {
+        id: z.string(),
+      },
+      outputSchema: {
+        runs: z.array(ScheduleRunSchema),
+      },
+    },
+    async ({ id }) => {
+      if (!scheduleService) {
+        throw new Error("Schedule service is not configured");
+      }
+
+      await requireScheduleTarget(id, "agent");
+      const runs = await scheduleService.logs(id);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ runs }),
+      };
+    },
+  );
+
+  registerTool(
     "create_heartbeat",
     {
       title: "Create heartbeat",
