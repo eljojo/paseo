@@ -2009,14 +2009,6 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
-  /**
-   * The daemon's plan-usage service, for callers assembled before this server
-   * exists — the Paseo tool catalog reaches it through a resolver.
-   */
-  public getProviderUsageService(): ProviderUsageService {
-    return this.providerUsageService;
-  }
-
   public resolveVoiceSpeakHandler(callerAgentId: string): VoiceSpeakHandler | null {
     return this.voiceSpeakHandlers.get(callerAgentId) ?? null;
   }

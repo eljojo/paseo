@@ -5507,20 +5507,20 @@ describe("provider listing MCP tool", () => {
         },
       ],
     };
-    const listUsage = vi.fn().mockResolvedValue(usage);
+    const listLegacyUsage = vi.fn().mockResolvedValue(usage);
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: provStub.manager,
-      providerUsage: () => ({ listUsage }),
+      providerUsage: { listLegacyUsage },
       logger,
     });
     const tool = registeredTool(server, "list_provider_usage");
 
     const response = await tool.handler({ forceRefresh: true });
 
-    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: true });
+    expect(listLegacyUsage).toHaveBeenCalledWith({ forceRefresh: true });
     expect(response.structuredContent).toEqual(usage);
   });
 

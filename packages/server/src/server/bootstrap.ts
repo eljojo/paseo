@@ -1441,7 +1441,7 @@ export async function createPaseoDaemon(
     callerAgentId: runtime.callerAgentId,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
-    providerUsage: () => wsServer?.getProviderUsageService() ?? null,
+    providerUsage: pluginRuntime,
     resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
     resolveCallerContext: (agentId) => wsServer?.resolveVoiceCallerContext(agentId) ?? null,
     logger,

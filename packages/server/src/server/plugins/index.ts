@@ -164,8 +164,8 @@ export class PluginService {
     return this.usageSources.listReports(options);
   }
 
-  listLegacyUsage() {
-    return this.usageSources.listLegacyUsage();
+  listLegacyUsage(options?: Pick<ListUsageReportsOptions, "forceRefresh">) {
+    return this.usageSources.listLegacyUsage(options);
   }
 
   subscribeProviderRegistrations(listener: () => void): () => void {
