@@ -209,8 +209,10 @@ export class UsageSourceRegistry {
   }
 
   // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
-  async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
-    const reports = await this.listReports();
+  async listLegacyUsage(
+    options?: Pick<ListUsageReportsOptions, "forceRefresh">,
+  ): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
+    const reports = await this.listReports(options);
     return {
       fetchedAt: reports.length
         ? reports.reduce(
