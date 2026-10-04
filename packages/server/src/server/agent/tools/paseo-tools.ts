@@ -64,7 +64,7 @@ import {
   type UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import type { PluginService } from "../../plugins/index.js";
 import {
   AgentModelSchema,
   AgentProviderEnum,
@@ -128,12 +128,8 @@ export interface PaseoToolHostDependencies {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  /**
-   * Resolver for the daemon's plan-usage service. A resolver rather than the
-   * service itself: it is owned by the WebSocket server, which is constructed
-   * after these dependencies are assembled.
-   */
-  providerUsage?: () => Pick<ProviderUsageService, "listUsage"> | null;
+  /** Plan usage across the discovered usage sources, in the legacy provider-list shape. */
+  providerUsage?: Pick<PluginService, "listLegacyUsage"> | null;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   github?: ForgeService;
   workspaceGitService?: Pick<
@@ -3269,11 +3265,11 @@ function createToolCatalog(
       },
     },
     async ({ forceRefresh = false }) => {
-      const service = options.providerUsage?.();
+      const service = options.providerUsage;
       if (!service) {
         throw new Error("Provider usage is unavailable: the daemon exposes no usage service");
       }
-      const usage = await service.listUsage({ forceRefresh });
+      const usage = await service.listLegacyUsage({ forceRefresh });
       return {
         content: [],
         structuredContent: ensureValidJson({
