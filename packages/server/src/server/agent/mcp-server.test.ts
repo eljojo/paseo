@@ -49,7 +49,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
-import type { ScheduleService } from "../schedule/service.js";
+import { ScheduleService } from "../schedule/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
@@ -1969,7 +1969,6 @@ describe("create_agent MCP tool", () => {
     expect(lookupTool(server, "create_worktree")).toBeUndefined();
     expect(lookupTool(server, "list_worktrees")).toBeUndefined();
     expect(lookupTool(server, "archive_worktree")).toBeUndefined();
-    expect(lookupTool(server, "detach_agent")).toBeUndefined();
     expect(lookupTool(server, "update_heartbeat")).toBeUndefined();
   });
 
@@ -5760,6 +5759,31 @@ describe("create_schedule MCP tool", () => {
     expect(createOrReplace).not.toHaveBeenCalled();
   });
 
+  it("passes runTimeout through as runTimeoutMs", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      logger,
+    });
+
+    await invokeToolWithParsedInput(registeredTool(server, "create_schedule"), {
+      prompt: "say hello",
+      cron: "*/5 * * * *",
+      provider: "codex",
+      runTimeout: "1h30m",
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ runTimeoutMs: 90 * 60 * 1000 }),
+    );
+  });
+
   it("keeps provider forms compatible without materializing default schedule isolation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
@@ -6099,6 +6123,50 @@ describe("create_heartbeat MCP tool", () => {
     );
   });
 
+  it("passes runTimeout through as runTimeoutMs and rejects a malformed one", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      provider: "codex",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: { title: "Parent agent" },
+    } as ManagedAgent);
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_heartbeat");
+
+    await invokeToolWithParsedInput(tool, {
+      prompt: "check status",
+      cron: "*/15 * * * *",
+      runTimeout: "30m",
+    });
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ runTimeoutMs: 30 * 60 * 1000 }),
+    );
+
+    createOrReplace.mockClear();
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        prompt: "check status",
+        cron: "*/15 * * * *",
+        runTimeout: "soon",
+      }),
+    ).rejects.toThrow("Invalid duration format");
+    expect(createOrReplace).not.toHaveBeenCalled();
+  });
+
   it("requires an agent-scoped session", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn();
@@ -6119,6 +6187,193 @@ describe("create_heartbeat MCP tool", () => {
     ).rejects.toThrow("create_heartbeat requires an agent-scoped session");
 
     expect(createOrReplace).not.toHaveBeenCalled();
+  });
+
+  // A supervisor arms wakes on the sessions it supervises, so agentId may name
+  // an agent other than the caller. Only active agents qualify.
+  const SUPERVISOR_ID = "99999999-9999-4999-8999-999999999999";
+  const WORKER_ID = "11111111-1111-4111-8111-111111111111";
+  const OTHER_WORKER_ID = "22222222-2222-4222-8222-222222222222";
+
+  function supervisorDeps(records: Record<string, Partial<StoredAgentRecord>>) {
+    const deps = createTestDeps();
+    deps.spies.agentManager.getAgent.mockImplementation((id: string) =>
+      id === SUPERVISOR_ID
+        ? ({
+            id: SUPERVISOR_ID,
+            provider: "codex",
+            cwd: REPO_CWD,
+            lifecycle: "idle",
+            currentModeId: "build",
+            availableModes: [],
+            config: { title: "Supervisor" },
+          } as ManagedAgent)
+        : null,
+    );
+    deps.spies.agentStorage.get.mockImplementation(async (id: string) => {
+      const overrides = records[id];
+      return overrides ? createStoredRecord({ id, archivedAt: null, ...overrides }) : null;
+    });
+    return deps;
+  }
+
+  it("arms a heartbeat on another agent when agentId is given", async () => {
+    const { agentManager, agentStorage } = supervisorDeps({ [WORKER_ID]: {} });
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: SUPERVISOR_ID,
+      logger,
+    });
+
+    const result = await invokeToolWithParsedInput(registeredTool(server, "create_heartbeat"), {
+      prompt: "check on the worker",
+      cron: "*/15 * * * *",
+      name: "wake",
+      agentId: WORKER_ID,
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { type: "agent", agentId: WORKER_ID }, name: "wake" }),
+    );
+    expect(result.structuredContent.target).toEqual({ type: "agent", agentId: WORKER_ID });
+  });
+
+  it("records the caller as the creator, whether it arms another agent or itself", async () => {
+    const { agentManager, agentStorage } = supervisorDeps({ [WORKER_ID]: {} });
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: SUPERVISOR_ID,
+      logger,
+    });
+    const tool = registeredTool(server, "create_heartbeat");
+
+    await invokeToolWithParsedInput(tool, {
+      prompt: "check on the worker",
+      cron: "*/15 * * * *",
+      agentId: WORKER_ID,
+    });
+    expect(createOrReplace).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { type: "agent", agentId: WORKER_ID },
+        createdByAgentId: SUPERVISOR_ID,
+      }),
+    );
+
+    await invokeToolWithParsedInput(tool, {
+      prompt: "check on myself",
+      cron: "*/15 * * * *",
+    });
+    expect(createOrReplace).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { type: "agent", agentId: SUPERVISOR_ID },
+        createdByAgentId: SUPERVISOR_ID,
+      }),
+    );
+  });
+
+  it("refuses to arm a heartbeat on an unknown agent", async () => {
+    const { agentManager, agentStorage } = supervisorDeps({});
+    const createOrReplace = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: SUPERVISOR_ID,
+      logger,
+    });
+
+    await expect(
+      invokeToolWithParsedInput(registeredTool(server, "create_heartbeat"), {
+        prompt: "check on the worker",
+        cron: "*/15 * * * *",
+        agentId: WORKER_ID,
+      }),
+    ).rejects.toThrow(`Agent ${WORKER_ID} not found`);
+    expect(createOrReplace).not.toHaveBeenCalled();
+  });
+
+  it("refuses to arm a heartbeat on an archived agent", async () => {
+    const { agentManager, agentStorage } = supervisorDeps({
+      [WORKER_ID]: { archivedAt: "2026-04-12T00:00:00.000Z" },
+    });
+    const createOrReplace = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      callerAgentId: SUPERVISOR_ID,
+      logger,
+    });
+
+    await expect(
+      invokeToolWithParsedInput(registeredTool(server, "create_heartbeat"), {
+        prompt: "check on the worker",
+        cron: "*/15 * * * *",
+        agentId: WORKER_ID,
+      }),
+    ).rejects.toThrow(`Agent ${WORKER_ID} is archived`);
+    expect(createOrReplace).not.toHaveBeenCalled();
+  });
+
+  it("keeps one heartbeat per target when a supervisor reuses a name", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-heartbeat-two-targets-"));
+    const { agentManager, agentStorage } = supervisorDeps({
+      [WORKER_ID]: {},
+      [OTHER_WORKER_ID]: {},
+    });
+    const scheduleService = new ScheduleService({
+      paseoHome: workdir,
+      logger,
+      agentManager: {},
+      agentStorage,
+      createAgent: vi.fn(),
+      createDirectoryWorkspace: vi.fn(),
+      createPaseoWorktreeWorkspace: vi.fn(),
+      archiveWorkspace: vi.fn(),
+    } as unknown as ConstructorParameters<typeof ScheduleService>[0]);
+
+    try {
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        scheduleService,
+        callerAgentId: SUPERVISOR_ID,
+        logger,
+      });
+      const tool = registeredTool(server, "create_heartbeat");
+      const arm = (agentId: string, prompt: string) =>
+        invokeToolWithParsedInput(tool, { prompt, cron: "*/15 * * * *", name: "wake", agentId });
+
+      const first = await arm(WORKER_ID, "wake worker one");
+      const second = await arm(OTHER_WORKER_ID, "wake worker two");
+      const replaced = await arm(WORKER_ID, "wake worker one, again");
+
+      expect(second.structuredContent.id).not.toBe(first.structuredContent.id);
+      expect(replaced.structuredContent.id).toBe(first.structuredContent.id);
+      const heartbeats = await registeredTool(server, "list_heartbeats").handler({});
+      expect(
+        heartbeats.structuredContent.heartbeats
+          .map((entry: { target: { agentId: string } }) => entry.target.agentId)
+          .sort(),
+      ).toEqual([WORKER_ID, OTHER_WORKER_ID].sort());
+    } finally {
+      await rm(workdir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -6151,28 +6406,187 @@ describe("heartbeat ownership MCP tools", () => {
     expect(deleteSchedule).toHaveBeenCalledWith(heartbeat.id);
   });
 
-  it("rejects another agent's heartbeat", async () => {
+  // Same trust model as create_heartbeat's agentId: a supervisor clears the
+  // wake on a session it supervises, including one whose target is archived.
+  it("deletes another agent's heartbeat by id", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const foreignHeartbeat = createStoredSchedule({
       prompt: "foreign",
       cadence: { type: "cron", expression: "0 * * * *" },
       target: { type: "agent", agentId: "other-agent" },
     });
+    const deleteSchedule = vi.fn(async () => undefined);
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: {
         inspect: vi.fn(async () => foreignHeartbeat),
-        delete: vi.fn(),
+        delete: deleteSchedule,
+      } as unknown as ScheduleService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    await registeredTool(server, "delete_heartbeat").handler({ id: foreignHeartbeat.id });
+
+    expect(deleteSchedule).toHaveBeenCalledWith(foreignHeartbeat.id);
+  });
+
+  it("refuses to delete a new-agent schedule through delete_heartbeat", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const schedule = createStoredSchedule({
+      prompt: "nightly sweep",
+      cadence: { type: "cron", expression: "0 3 * * *" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: "/tmp" } },
+    });
+    const deleteSchedule = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: {
+        inspect: vi.fn(async () => schedule),
+        delete: deleteSchedule,
       } as unknown as ScheduleService,
       callerAgentId: "parent-agent",
       logger,
     });
 
     await expect(
-      registeredTool(server, "delete_heartbeat").handler({ id: foreignHeartbeat.id }),
-    ).rejects.toThrow("does not belong to caller");
+      registeredTool(server, "delete_heartbeat").handler({ id: schedule.id }),
+    ).rejects.toThrow(`Heartbeat not found: ${schedule.id}`);
+    expect(deleteSchedule).not.toHaveBeenCalled();
+  });
+
+  it("requires an agent-scoped session to delete a heartbeat", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const deleteSchedule = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { inspect: vi.fn(), delete: deleteSchedule } as unknown as ScheduleService,
+      logger,
+    });
+
+    await expect(
+      registeredTool(server, "delete_heartbeat").handler({ id: "hb-1" }),
+    ).rejects.toThrow("Heartbeat operations require an agent-scoped session");
+    expect(deleteSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe("detach_agent MCP tool", () => {
+  const logger = createTestLogger();
+
+  async function realDeps() {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-detach-agent-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+    });
+    const createAgent = (title: string, labels: Record<string, string> = {}) =>
+      agentManager.createAgent({ provider: "codex", cwd: workdir, title }, undefined, {
+        labels,
+        workspaceId: undefined,
+      });
+    return { workdir, storage, agentManager, createAgent };
+  }
+
+  it("removes the parent link so archiving the former parent leaves the agent alive", async () => {
+    const { workdir, storage, agentManager, createAgent } = await realDeps();
+    try {
+      const parent = await createAgent("Parent");
+      const kept = await createAgent("Kept", { [PARENT_AGENT_ID_LABEL]: parent.id });
+      const cascaded = await createAgent("Cascaded", { [PARENT_AGENT_ID_LABEL]: parent.id });
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      const result = await registeredTool(server, "detach_agent").handler({ agentId: kept.id });
+
+      expect(result.structuredContent).toEqual({
+        agentId: kept.id,
+        previousParentAgentId: parent.id,
+      });
+      expect((await storage.get(kept.id))?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+
+      await agentManager.archiveAgent(parent.id);
+
+      expect((await storage.get(parent.id))?.archivedAt).toEqual(expect.any(String));
+      expect((await storage.get(kept.id))?.archivedAt).toBeFalsy();
+      // Control: an agent that stayed attached is still cascaded.
+      expect((await storage.get(cascaded.id))?.archivedAt).toEqual(expect.any(String));
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("refuses an agent that has no parent instead of succeeding silently", async () => {
+    const { workdir, storage, agentManager, createAgent } = await realDeps();
+    try {
+      const root = await createAgent("Root");
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: root.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      await expect(
+        registeredTool(server, "detach_agent").handler({ agentId: root.id }),
+      ).rejects.toThrow(`Agent ${root.id} has no parent to detach from`);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("refuses an unknown agent", async () => {
+    const { workdir, storage, agentManager } = await realDeps();
+    try {
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      await expect(
+        registeredTool(server, "detach_agent").handler({ agentId: randomUUID() }),
+      ).rejects.toThrow(/Agent .* not found/);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("refuses an archived agent", async () => {
+    const { workdir, storage, agentManager, createAgent } = await realDeps();
+    try {
+      const parent = await createAgent("Parent");
+      const child = await createAgent("Child", { [PARENT_AGENT_ID_LABEL]: parent.id });
+      await agentManager.archiveAgent(child.id);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      await expect(
+        registeredTool(server, "detach_agent").handler({ agentId: child.id }),
+      ).rejects.toThrow(`Agent ${child.id} is archived`);
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
   });
 });
 

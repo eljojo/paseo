@@ -54,13 +54,16 @@ const AGENT_FIELDS = [
 const AUTOMATION_FIELDS = [
   "name",
   "id",
+  "agentId",
   "cron",
   "timezone",
   "provider",
   "cwd",
   "isolation",
+  "modeId",
   "maxRuns",
   "expiresIn",
+  "runTimeout",
   "clearExpires",
 ] as const;
 const BROWSER_FIELDS = [
@@ -152,6 +155,11 @@ export const PASEO_TOOL_CATALOG = {
     context: targetAgent(),
     detail: { inputOrder: ["agentId"] },
   },
+  get_agent_usage: {
+    label: "Read agent usage",
+    context: targetAgent(),
+    detail: { inputOrder: ["agentId"] },
+  },
   get_agent_activity: {
     label: "Read agent activity",
     context: targetAgent(),
@@ -178,6 +186,11 @@ export const PASEO_TOOL_CATALOG = {
   },
   archive_agent: {
     label: "Archive agent",
+    context: targetAgent(),
+    detail: { inputOrder: ["agentId"] },
+  },
+  detach_agent: {
+    label: "Detach agent",
     context: targetAgent(),
     detail: { inputOrder: ["agentId"] },
   },
@@ -292,6 +305,17 @@ export const PASEO_TOOL_CATALOG = {
   },
   delete_schedule: {
     label: "Delete schedule",
+    context: field("id"),
+    detail: { inputOrder: ["id"] },
+  },
+  list_heartbeats: { label: "List heartbeats", detail: { inputOrder: ["agentId"] } },
+  inspect_heartbeat: {
+    label: "Inspect heartbeat",
+    context: field("id"),
+    detail: { inputOrder: ["id"] },
+  },
+  heartbeat_logs: {
+    label: "Read heartbeat logs",
     context: field("id"),
     detail: { inputOrder: ["id"] },
   },
