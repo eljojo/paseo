@@ -222,6 +222,21 @@ export interface AgentUsage {
   contextWindowUsedTokens?: number;
 }
 
+/**
+ * What one completed turn spent, as the provider adapter can vouch for it. Every field is
+ * this turn's own share, never a running total, and a field the provider did not report is
+ * absent: unknown, not zero. AgentUsage above is a context-occupancy snapshot whose
+ * semantics differ per provider (per request, per session, stale across turns), so it is
+ * not summable; this is the only usage shape the manager accumulates.
+ */
+export interface AgentTurnUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
+}
+
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",
@@ -405,7 +420,13 @@ export type AgentTimelineItem =
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
   | { type: "turn_started"; provider: AgentProvider; turnId?: string }
-  | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
+  | {
+      type: "turn_completed";
+      provider: AgentProvider;
+      usage?: AgentUsage;
+      turnUsage?: AgentTurnUsage;
+      turnId?: string;
+    }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
       type: "mode_changed";

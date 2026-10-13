@@ -14,6 +14,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
+import { foldTurnUsage } from "./agent-usage-totals.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import type {
   AgentClient,
@@ -6450,6 +6451,211 @@ describe("agent snapshot MCP serialization", () => {
     await expect(tool.handler({ agentId: "internal-agent" })).rejects.toThrow(
       "Agent internal-agent not found",
     );
+  });
+
+  describe("get_agent_usage", () => {
+    const twoTurns = foldTurnUsage(
+      foldTurnUsage(undefined, {
+        inputTokens: 100,
+        outputTokens: 40,
+        cacheReadTokens: 1_000,
+        cacheWriteTokens: 200,
+        costUsd: 0.25,
+      }),
+      {
+        inputTokens: 50,
+        outputTokens: 10,
+        cacheReadTokens: 500,
+        cacheWriteTokens: 0,
+        costUsd: 0.125,
+      },
+    );
+
+    it("reads the caller's own cumulative usage when no agentId is given", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({ id: "agent-1", provider: "claude", usageTotals: twoTurns }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        callerAgentId: "agent-1",
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+      const tool = registeredTool(server, "get_agent_usage");
+
+      const response = await tool.handler({});
+
+      expect(spies.agentManager.getAgent).toHaveBeenCalledWith("agent-1");
+      expect(response.structuredContent).toEqual({
+        agentId: "agent-1",
+        provider: "claude",
+        status: "idle",
+        turnInFlight: false,
+        coverage: expect.stringContaining("completed turns only"),
+        turnsCounted: 2,
+        inputTokens: 150,
+        outputTokens: 50,
+        cacheReadTokens: 1_500,
+        cacheWriteTokens: 200,
+        costUsd: 0.375,
+        turnsReporting: {
+          inputTokens: 2,
+          outputTokens: 2,
+          cacheReadTokens: 2,
+          cacheWriteTokens: 2,
+          costUsd: 2,
+        },
+        complete: true,
+        providerNotes: [expect.stringContaining("estimate")],
+      });
+    });
+
+    it("is readable mid-turn and says the running turn is not in the figures", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({
+          id: "agent-1",
+          lifecycle: "running",
+          activeTurnId: "turn-2",
+          // A mid-turn occupancy reading must not leak into the cumulative figures.
+          lastUsage: { inputTokens: 999_999, totalCostUsd: 99 },
+          usageTotals: twoTurns,
+        }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        callerAgentId: "agent-1",
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+
+      const response = await registeredTool(server, "get_agent_usage").handler({});
+
+      expect(response.structuredContent).toMatchObject({
+        status: "running",
+        turnInFlight: true,
+        turnsCounted: 2,
+        inputTokens: 150,
+        costUsd: 0.375,
+      });
+    });
+
+    it("reports a cost the provider never gave as null, not zero", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({
+          id: "codex-agent",
+          provider: "codex",
+          usageTotals: foldTurnUsage(undefined, {
+            inputTokens: 1_900,
+            outputTokens: 120,
+            cacheReadTokens: 500,
+          }),
+        }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+
+      const response = await registeredTool(server, "get_agent_usage").handler({
+        agentId: "codex-agent",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        provider: "codex",
+        inputTokens: 1_900,
+        outputTokens: 120,
+        cacheReadTokens: 500,
+        cacheWriteTokens: null,
+        costUsd: null,
+        complete: true,
+        providerNotes: [expect.stringContaining("never reports cost")],
+      });
+    });
+
+    it("says a provider with no per-turn usage counts turns but knows no figures", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({
+          id: "other-agent",
+          provider: "opencode",
+          usageTotals: foldTurnUsage(foldTurnUsage(undefined, undefined), undefined),
+        }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+
+      const response = await registeredTool(server, "get_agent_usage").handler({
+        agentId: "other-agent",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        provider: "opencode",
+        turnsCounted: 2,
+        inputTokens: null,
+        outputTokens: null,
+        costUsd: null,
+        providerNotes: [expect.stringContaining("does not report per-turn usage")],
+      });
+    });
+
+    it("reads a closed agent's persisted totals from storage", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(null);
+      spies.agentStorage.get.mockResolvedValue(
+        createStoredRecord({ id: "archived-agent", usageTotals: twoTurns }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+
+      const response = await registeredTool(server, "get_agent_usage").handler({
+        agentId: "archived-agent",
+      });
+
+      expect(response.structuredContent).toMatchObject({
+        agentId: "archived-agent",
+        status: "closed",
+        turnInFlight: false,
+        turnsCounted: 2,
+        costUsd: 0.375,
+      });
+    });
+
+    it("needs an agentId when there is no caller, and hides unknown and internal agents", async () => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      spies.agentManager.getAgent.mockReturnValue(null);
+      async function storedRecordFor(id: string) {
+        return id === "internal-agent" ? createStoredRecord({ id, internal: true }) : null;
+      }
+      spies.agentStorage.get.mockImplementation(storedRecordFor);
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        logger,
+        providerSnapshotManager: createClaudeOnlyManager(),
+      });
+      const tool = registeredTool(server, "get_agent_usage");
+
+      await expect(tool.handler({})).rejects.toThrow("agentId is required");
+      await expect(tool.handler({ agentId: "nope" })).rejects.toThrow("Agent nope not found");
+      await expect(tool.handler({ agentId: "internal-agent" })).rejects.toThrow(
+        "Agent internal-agent not found",
+      );
+    });
   });
 
   it("defaults list_agents to caller cwd and excludes archived agents", async () => {

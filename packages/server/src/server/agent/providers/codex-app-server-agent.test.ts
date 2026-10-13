@@ -6367,6 +6367,145 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  // thread/tokenUsage/updated carries `last` (the latest model request) and `total` (the thread's
+  // running total). A turn's tokens are the growth of `total` across the turn, with the turn's
+  // starting point recovered as `total - last` from its first update.
+  function tokenUsageNotification(
+    total: { input: number; cached: number; output: number },
+    last: { input: number; cached: number; output: number },
+    threadId?: string,
+  ) {
+    const breakdown = (figures: { input: number; cached: number; output: number }) => ({
+      inputTokens: figures.input,
+      cachedInputTokens: figures.cached,
+      outputTokens: figures.output,
+    });
+    return {
+      ...(threadId ? { threadId } : {}),
+      tokenUsage: { total: breakdown(total), last: breakdown(last) },
+    };
+  }
+
+  function completedTurnUsage(events: AgentStreamEvent[]) {
+    const completed = events.filter((event) => event.type === "turn_completed");
+    expect(completed).toHaveLength(1);
+    return (completed[0] as Extract<AgentStreamEvent, { type: "turn_completed" }>).turnUsage;
+  }
+
+  test("turn_completed reports the turn's tokens as growth of the thread's running total, with no cost", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals(session);
+
+    // First turn of a thread: two model requests.
+    internals.handleNotification("turn/started", { turn: { id: "native-1" } });
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 1000, cached: 200, output: 50 },
+        { input: 1000, cached: 200, output: 50 },
+      ),
+    );
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 1900, cached: 500, output: 120 },
+        { input: 900, cached: 300, output: 70 },
+      ),
+    );
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+    const first = completedTurnUsage(events);
+
+    // Second turn on a thread that already carries history: its first update starts mid-total.
+    events.length = 0;
+    internals.handleNotification("turn/started", { turn: { id: "native-2" } });
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 3000, cached: 800, output: 200 },
+        { input: 1100, cached: 300, output: 80 },
+      ),
+    );
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+    const second = completedTurnUsage(events);
+
+    expect(first).toEqual({ inputTokens: 1900, outputTokens: 120, cacheReadTokens: 500 });
+    expect(second).toEqual({ inputTokens: 1100, outputTokens: 80, cacheReadTokens: 300 });
+  });
+
+  test("a turn with no token update reports no turn usage rather than the previous turn's", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals(session);
+
+    internals.handleNotification("turn/started", { turn: { id: "native-1" } });
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 10, cached: 0, output: 5 },
+        { input: 10, cached: 0, output: 5 },
+      ),
+    );
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+    events.length = 0;
+    internals.handleNotification("turn/started", { turn: { id: "native-2" } });
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+
+    expect(completedTurnUsage(events)).toBeUndefined();
+  });
+
+  test("an update without a usable total or last leaves the turn's tokens unknown", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals(session);
+
+    internals.handleNotification("turn/started", { turn: { id: "native-1" } });
+    // Only the latest request is known; the turn's starting point cannot be recovered.
+    internals.handleNotification("thread/tokenUsage/updated", {
+      tokenUsage: { last: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 5 } },
+    });
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+
+    expect(completedTurnUsage(events)).toBeUndefined();
+  });
+
+  test("a sub-agent thread's token updates do not enter the root thread's turn usage", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internals = asInternals(session);
+    (
+      session as unknown as { subAgentCallIdByChildThreadId: Map<string, string> }
+    ).subAgentCallIdByChildThreadId.set("child-thread", "call-1");
+
+    internals.handleNotification("turn/started", { turn: { id: "native-1" } });
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 100, cached: 0, output: 10 },
+        { input: 100, cached: 0, output: 10 },
+      ),
+    );
+    internals.handleNotification(
+      "thread/tokenUsage/updated",
+      tokenUsageNotification(
+        { input: 9000, cached: 0, output: 900 },
+        { input: 9000, cached: 0, output: 900 },
+        "child-thread",
+      ),
+    );
+    internals.handleNotification("turn/completed", { turn: { status: "completed", error: null } });
+
+    expect(completedTurnUsage(events)).toEqual({
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+    });
+  });
+
   test("streams Codex assistant message deltas and does not replay completed text", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

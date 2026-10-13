@@ -6,6 +6,7 @@ import { promises as fs } from "node:fs";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentStorage } from "./agent-storage.js";
+import { foldTurnUsage, summarizeUsageTotals } from "./agent-usage-totals.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -128,6 +129,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
     lastUsage: overrides.lastUsage,
+    usageTotals: overrides.usageTotals,
     lastError: overrides.lastError,
   };
 }
@@ -271,6 +273,36 @@ describe("AgentStorage", () => {
     const updatedRecord = await storage.get(agentId);
     expect(updatedRecord?.createdAt).toBe(firstTimestamp.toISOString());
     expect(updatedRecord?.lastStatus).toBe("running");
+  });
+
+  test("applySnapshot persists cumulative usage totals across a reload from disk", async () => {
+    const usageTotals = foldTurnUsage(
+      foldTurnUsage(undefined, { inputTokens: 100, costUsd: 0.25 }),
+      { inputTokens: 50 },
+    );
+    await storage.applySnapshot(createManagedAgent({ id: "agent-usage", usageTotals }));
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-usage");
+
+    expect(persisted?.usageTotals).toEqual(usageTotals);
+    expect(summarizeUsageTotals(persisted?.usageTotals)).toMatchObject({
+      turnsCounted: 2,
+      inputTokens: 150,
+      costUsd: 0.25,
+      complete: false,
+    });
+  });
+
+  test("applySnapshot from an agent that never loaded usage totals keeps the stored ones", async () => {
+    const usageTotals = foldTurnUsage(undefined, { outputTokens: 12 });
+    await storage.applySnapshot(createManagedAgent({ id: "agent-usage-kept", usageTotals }));
+
+    await storage.applySnapshot(
+      createManagedAgent({ id: "agent-usage-kept", lifecycle: "closed" }),
+    );
+
+    expect((await storage.get("agent-usage-kept"))?.usageTotals).toEqual(usageTotals);
   });
 
   test("applySnapshot preserves archivedAt (soft-delete) status", async () => {
