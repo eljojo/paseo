@@ -15,7 +15,7 @@ Paseo also has **heartbeats**. A heartbeat sends a recurring prompt back into on
 Both concepts use the same cron engine, but their product surfaces stay separate:
 
 - **Schedules** create a new agent each run. You can inspect, pause, resume, run once, update, or delete them.
-- **Heartbeats** target one existing agent. They are intentionally lightweight: create or delete them over MCP; from the CLI you can also update only their cron period.
+- **Heartbeats** target one existing agent. They are intentionally lightweight: over MCP you create, list, inspect, and delete them, and an agent can arm one on another active agent; from the CLI you can also update only their cron period.
 
 Cron is the canonical cadence. The CLI accepts simple presets such as `5m` or `1h`, but compiles them to cron rather than storing a separate interval type.
 
