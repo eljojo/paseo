@@ -3521,6 +3521,173 @@ describe("ClaudeAgentSession context window usage", () => {
       },
     ]);
   });
+  // `total_cost_usd` and `modelUsage` are running totals for one query() process; `usage` is
+  // main-loop-only. The adapter differences the running totals into per-turn figures.
+  function createCumulativeResult(params: {
+    totalCostUsd: number;
+    models: Record<string, Record<string, number>>;
+    subtype?: string;
+  }): Record<string, unknown> {
+    return createSuccessResult({
+      subtype: params.subtype ?? "success",
+      total_cost_usd: params.totalCostUsd,
+      modelUsage: params.models,
+    });
+  }
+
+  function turnUsageOf(events: AgentStreamEvent[]) {
+    const completed = events.filter(
+      (event): event is Extract<AgentStreamEvent, { type: "turn_completed" }> =>
+        event.type === "turn_completed",
+    );
+    expect(completed).toHaveLength(1);
+    return completed[0].turnUsage;
+  }
+
+  test("turn_completed carries this turn's share of the query's running cost and token totals", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createCumulativeResult({
+          totalCostUsd: 0.25,
+          models: {
+            "claude-sonnet-4-6": {
+              inputTokens: 100,
+              outputTokens: 40,
+              cacheReadInputTokens: 1_000,
+              cacheCreationInputTokens: 200,
+              contextWindow: 200_000,
+            },
+          },
+        }),
+      ],
+      [
+        createCumulativeResult({
+          totalCostUsd: 0.4,
+          models: {
+            "claude-sonnet-4-6": {
+              inputTokens: 130,
+              outputTokens: 70,
+              cacheReadInputTokens: 2_500,
+              cacheCreationInputTokens: 200,
+              contextWindow: 200_000,
+            },
+            // A subagent's model joins the running total mid-session.
+            "claude-haiku-4-5": {
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 30,
+              contextWindow: 200_000,
+            },
+          },
+        }),
+      ],
+    ]);
+
+    try {
+      const first = turnUsageOf(await collectStreamEvents(session, "one"));
+      const second = turnUsageOf(await collectStreamEvents(session, "two"));
+
+      expect(first).toEqual({
+        inputTokens: 100,
+        outputTokens: 40,
+        cacheReadTokens: 1_000,
+        cacheWriteTokens: 200,
+        costUsd: 0.25,
+      });
+      expect(second).toEqual({
+        inputTokens: 40,
+        outputTokens: 35,
+        cacheReadTokens: 1_500,
+        cacheWriteTokens: 30,
+        costUsd: 0.15,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a restarted query starts its running total over, so the baseline resets with it", async () => {
+    // The query factory replays this script for every query it launches, so the restarted
+    // process reports 0.4 as its own total. Against the old process's 0.4 that difference is
+    // zero; none of the old 0.4 is part of the new total.
+    const session = await createSessionForTurns([
+      [createInitMessage(), createCumulativeResult({ totalCostUsd: 0.4, models: {} })],
+    ]);
+
+    try {
+      const beforeRestart = turnUsageOf(await collectStreamEvents(session, "one"));
+      (session as unknown as { queryRestartNeeded: boolean }).queryRestartNeeded = true;
+      const afterRestart = turnUsageOf(await collectStreamEvents(session, "two"));
+
+      expect(beforeRestart).toEqual({ costUsd: 0.4 });
+      expect(afterRestart).toEqual({ costUsd: 0.4 });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a running total that falls is a reset (/clear), not negative spend", async () => {
+    const session = await createSessionForTurns([
+      [createInitMessage(), createCumulativeResult({ totalCostUsd: 0.4, models: {} })],
+      [createCumulativeResult({ totalCostUsd: 0.1, models: {} })],
+    ]);
+
+    try {
+      await collectStreamEvents(session, "one");
+      const afterReset = turnUsageOf(await collectStreamEvents(session, "two"));
+
+      expect(afterReset).toEqual({ costUsd: 0.1 });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("a failed turn's spend is not lost: it lands in the next completed turn", async () => {
+    const session = await createSessionForTurns([
+      [createInitMessage(), createCumulativeResult({ totalCostUsd: 0.25, models: {} })],
+      [
+        createCumulativeResult({
+          totalCostUsd: 0.4,
+          models: {},
+          subtype: "error_during_execution",
+        }),
+      ],
+      [createCumulativeResult({ totalCostUsd: 0.6, models: {} })],
+    ]);
+
+    try {
+      await collectStreamEvents(session, "one");
+      const failedTurn = await collectStreamEvents(session, "two");
+      expect(failedTurn.map((event) => event.type)).toContain("turn_failed");
+      expect(failedTurn.filter((event) => event.type === "turn_completed")).toEqual([]);
+      const third = turnUsageOf(await collectStreamEvents(session, "three"));
+
+      expect(third?.costUsd).toBeCloseTo(0.35, 10);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("figures the result does not carry stay absent instead of becoming zero", async () => {
+    const session = await createSessionForTurns([
+      // No token counts in modelUsage, no cost on the result.
+      [
+        createInitMessage(),
+        createSuccessResult({
+          total_cost_usd: undefined,
+          modelUsage: { "claude-sonnet-4-6": { contextWindow: 200_000 } },
+        }),
+      ],
+    ]);
+
+    try {
+      expect(turnUsageOf(await collectStreamEvents(session, "one"))).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
 });
 
 describe("toClaudeSdkMcpConfig", () => {

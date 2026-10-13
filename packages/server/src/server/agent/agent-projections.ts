@@ -100,6 +100,7 @@ export function toStoredAgentRecord(
       : null,
     internal: options?.internal,
     owner: agent.owner,
+    usageTotals: agent.usageTotals,
   } satisfies StoredAgentRecord;
 }
 

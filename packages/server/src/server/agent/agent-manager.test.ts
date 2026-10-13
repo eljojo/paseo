@@ -24,6 +24,7 @@ import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { startAgentRun } from "./agent-prompt.js";
+import { summarizeUsageTotals } from "./agent-usage-totals.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -11892,3 +11893,258 @@ test.each([false, true])(
     }
   },
 );
+
+// Cumulative per-agent usage: AgentManager folds each completed turn's `turnUsage` into totals
+// persisted on the agent record. `usage` (context occupancy) is never summed.
+async function createUsageTotalsAgent(options?: { storageDir?: string; agentId?: string }) {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-usage-totals-"));
+  const storage = new AgentStorage(options?.storageDir ?? join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+  class CapturingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      capturedSession = new TestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? process.cwd(),
+      });
+      return capturedSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new CapturingClient() },
+    registry: storage,
+    logger,
+    idFactory: () => options?.agentId ?? "00000000-0000-4000-8000-0000000000a1",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  return {
+    manager,
+    storage,
+    workdir,
+    agentId: snapshot.id,
+    session: () => capturedSession!,
+  };
+}
+
+async function completeUsageTurn(
+  session: TestAgentSession,
+  manager: AgentManager,
+  agentId: string,
+  turnId: string,
+  turnUsage?: import("./agent-sdk-types.js").AgentTurnUsage,
+): Promise<void> {
+  session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+  await vi.waitFor(() => expect(manager.getAgent(agentId)?.lifecycle).toBe("running"));
+  session.pushEvent({
+    type: "turn_completed",
+    provider: "codex",
+    turnId,
+    ...(turnUsage ? { turnUsage } : {}),
+  });
+  await vi.waitFor(() => expect(manager.getAgent(agentId)?.lifecycle).toBe("idle"));
+}
+
+test("accumulates each completed turn's usage into the agent's cumulative totals", async () => {
+  const { manager, workdir, agentId, session } = await createUsageTotalsAgent();
+  try {
+    await completeUsageTurn(session(), manager, agentId, "turn-a", {
+      inputTokens: 100,
+      outputTokens: 40,
+      costUsd: 0.25,
+    });
+    await completeUsageTurn(session(), manager, agentId, "turn-b", {
+      inputTokens: 50,
+      outputTokens: 10,
+      costUsd: 0.125,
+    });
+
+    expect(summarizeUsageTotals(manager.getAgent(agentId)?.usageTotals)).toMatchObject({
+      turnsCounted: 2,
+      inputTokens: 150,
+      outputTokens: 50,
+      costUsd: 0.375,
+      complete: true,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a replayed turn_completed is not counted twice", async () => {
+  const { manager, workdir, agentId, session } = await createUsageTotalsAgent();
+  try {
+    await completeUsageTurn(session(), manager, agentId, "turn-a", { inputTokens: 100 });
+    // Same terminal again, after the turn finalized and with nothing active.
+    session().pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "turn-a",
+      turnUsage: { inputTokens: 100 },
+    });
+    await completeUsageTurn(session(), manager, agentId, "turn-b", { inputTokens: 7 });
+    session().pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "turn-a",
+      turnUsage: { inputTokens: 100 },
+    });
+    // The marker is the next turn; once it lands, the duplicates above were processed.
+    await completeUsageTurn(session(), manager, agentId, "turn-c", { inputTokens: 1 });
+
+    expect(summarizeUsageTotals(manager.getAgent(agentId)?.usageTotals)).toMatchObject({
+      turnsCounted: 3,
+      inputTokens: 108,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a turn whose provider reported no cost leaves cost unknown instead of zero", async () => {
+  const { manager, workdir, agentId, session } = await createUsageTotalsAgent();
+  try {
+    await completeUsageTurn(session(), manager, agentId, "turn-a", {
+      inputTokens: 10,
+      outputTokens: 5,
+    });
+    await completeUsageTurn(session(), manager, agentId, "turn-b");
+
+    const summary = summarizeUsageTotals(manager.getAgent(agentId)?.usageTotals);
+    expect(summary.costUsd).toBeNull();
+    expect(summary.turnsCounted).toBe(2);
+    expect(summary.inputTokens).toBe(10);
+    expect(summary.complete).toBe(false);
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cumulative usage is readable mid-turn and covers only the completed turns", async () => {
+  const { manager, workdir, agentId, session } = await createUsageTotalsAgent();
+  try {
+    await completeUsageTurn(session(), manager, agentId, "turn-a", {
+      inputTokens: 100,
+      costUsd: 0.5,
+    });
+    session().pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-b" });
+    await vi.waitFor(() => expect(manager.getAgent(agentId)?.lifecycle).toBe("running"));
+    // A mid-turn occupancy reading replaces lastUsage wholesale; it must not touch the totals.
+    session().pushEvent({
+      type: "usage_updated",
+      provider: "codex",
+      turnId: "turn-b",
+      usage: { inputTokens: 999_999, totalCostUsd: 99, contextWindowUsedTokens: 5 },
+    });
+    await vi.waitFor(() => expect(manager.getAgent(agentId)?.lastUsage?.inputTokens).toBe(999_999));
+
+    const midTurn = manager.getAgent(agentId);
+    expect(midTurn?.lifecycle).toBe("running");
+    expect(summarizeUsageTotals(midTurn?.usageTotals)).toMatchObject({
+      turnsCounted: 1,
+      inputTokens: 100,
+      costUsd: 0.5,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cumulative usage survives a daemon restart and keeps accumulating", async () => {
+  const first = await createUsageTotalsAgent();
+  const storageDir = join(first.workdir, "agents");
+  let persistence: AgentPersistenceHandle | null = null;
+  try {
+    await completeUsageTurn(first.session(), first.manager, first.agentId, "turn-a", {
+      inputTokens: 100,
+      costUsd: 0.25,
+    });
+    await completeUsageTurn(first.session(), first.manager, first.agentId, "turn-b", {
+      inputTokens: 50,
+      costUsd: 0.25,
+    });
+    await first.storage.flush();
+    persistence = first.manager.getAgent(first.agentId)?.persistence ?? null;
+    expect(persistence).not.toBeNull();
+    await first.manager.closeAgent(first.agentId);
+    await first.storage.flush();
+
+    const restartedStorage = new AgentStorage(storageDir, logger);
+    expect((await restartedStorage.get(first.agentId))?.usageTotals).toEqual(
+      expect.objectContaining({ turns: 2 }),
+    );
+    let resumedSession: TestAgentSession | null = null;
+    const restarted = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async resumeSession(
+            _handle: AgentPersistenceHandle,
+            config?: Partial<AgentSessionConfig>,
+          ): Promise<AgentSession> {
+            resumedSession = new TestAgentSession({
+              provider: "codex",
+              cwd: config?.cwd ?? first.workdir,
+            });
+            return resumedSession;
+          }
+        })(),
+      },
+      registry: restartedStorage,
+      logger,
+    });
+    const resumed = await restarted.resumeAgentFromPersistence(
+      persistence!,
+      { cwd: first.workdir },
+      first.agentId,
+    );
+    try {
+      expect(summarizeUsageTotals(restarted.getAgent(resumed.id)?.usageTotals)).toMatchObject({
+        turnsCounted: 2,
+        inputTokens: 150,
+        costUsd: 0.5,
+      });
+
+      // The restarted session reuses turn ids from the first run; none may be mistaken for a replay.
+      await completeUsageTurn(resumedSession!, restarted, resumed.id, "turn-a", {
+        inputTokens: 1,
+        costUsd: 0.5,
+      });
+      await restartedStorage.flush();
+      expect(
+        summarizeUsageTotals((await restartedStorage.get(resumed.id))?.usageTotals),
+      ).toMatchObject({ turnsCounted: 3, inputTokens: 151, costUsd: 1 });
+    } finally {
+      await restarted.closeAgent(resumed.id);
+    }
+  } finally {
+    rmSync(first.workdir, { recursive: true, force: true });
+  }
+});
+
+test("cumulative usage survives reloading the agent's session", async () => {
+  const { manager, workdir, agentId, session } = await createUsageTotalsAgent();
+  try {
+    await completeUsageTurn(session(), manager, agentId, "turn-a", { outputTokens: 9 });
+
+    await manager.reloadAgentSession(agentId);
+
+    expect(summarizeUsageTotals(manager.getAgent(agentId)?.usageTotals)).toMatchObject({
+      turnsCounted: 1,
+      outputTokens: 9,
+    });
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

@@ -122,6 +122,7 @@ import {
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
+  type AgentTurnUsage,
   type AgentRuntimeInfo,
   type FetchCatalogOptions,
   type ImportableProviderSession,
@@ -2037,6 +2038,73 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
   return typeof parentToolUseId === "string" && parentToolUseId.length > 0 ? parentToolUseId : null;
 }
 
+type ClaudeRunningFigures = Partial<Record<keyof AgentTurnUsage, number>>;
+
+const CLAUDE_MODEL_USAGE_FIGURES = [
+  ["inputTokens", "inputTokens"],
+  ["outputTokens", "outputTokens"],
+  ["cacheReadInputTokens", "cacheReadTokens"],
+  ["cacheCreationInputTokens", "cacheWriteTokens"],
+] as const;
+
+function readFigure(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function readClaudeRunningFigures(message: SDKResultMessage): ClaudeRunningFigures {
+  const figures: ClaudeRunningFigures = {};
+  const costUsd = readFigure(message.total_cost_usd);
+  if (costUsd !== undefined) {
+    figures.costUsd = costUsd;
+  }
+  // modelUsage, not message.usage: usage is the main loop of this turn only and leaves out
+  // subagents and compaction, which modelUsage covers.
+  const modelUsage = toObjectRecord(message.modelUsage);
+  for (const entry of Object.values(modelUsage ?? {})) {
+    const model = toObjectRecord(entry);
+    for (const [source, target] of CLAUDE_MODEL_USAGE_FIGURES) {
+      const value = readFigure(model?.[source]);
+      if (value !== undefined) {
+        figures[target] = (figures[target] ?? 0) + value;
+      }
+    }
+  }
+  return figures;
+}
+
+/**
+ * Claude's result.total_cost_usd and result.modelUsage are running totals for one query()
+ * process (sdk.d.ts: "cumulative across turns in streaming-input sessions ... read the latest
+ * result rather than summing across results"; "resumed sessions start fresh"; "a mid-session
+ * /clear resets the running total"). A turn's own spend is therefore the difference from the
+ * previous result of the same process, so the baseline is dropped whenever a process starts.
+ *
+ * The baseline only moves when a completed turn is reported. Spend from a failed, interrupted
+ * or suppressed result is still inside the next running total, so it lands in the next
+ * completed turn instead of being lost.
+ */
+class ClaudeRunningTotals {
+  private baseline: ClaudeRunningFigures = {};
+
+  reset(): void {
+    this.baseline = {};
+  }
+
+  completedTurn(message: SDKResultMessage): AgentTurnUsage | undefined {
+    const current = readClaudeRunningFigures(message);
+    const share: AgentTurnUsage = {};
+    for (const figure of Object.keys(current) as Array<keyof ClaudeRunningFigures>) {
+      const total = current[figure] as number;
+      const previous = this.baseline[figure] ?? 0;
+      // A total that fell means the process reset it (/clear); everything in it is new.
+      const delta = total >= previous ? total - previous : total;
+      share[figure] = Math.round(delta * 1e10) / 1e10;
+    }
+    this.baseline = { ...this.baseline, ...current };
+    return Object.keys(share).length > 0 ? share : undefined;
+  }
+}
+
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
   private streamRequestInputUsage: StreamRequestInputUsage | undefined;
@@ -2290,6 +2358,7 @@ class ClaudeAgentSession implements AgentSession {
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private readonly contextUsage: ClaudeContextUsageState;
+  private readonly runningTotals = new ClaudeRunningTotals();
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
@@ -3368,6 +3437,8 @@ class ClaudeAgentSession implements AgentSession {
     this.input = input;
     // A fresh Claude process has no turn of its own in flight.
     this.mainTurnInFlight = false;
+    // ...and its cost and token running totals start at zero.
+    this.runningTotals.reset();
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -4804,7 +4875,12 @@ class ClaudeAgentSession implements AgentSession {
           },
         });
       }
-      events.push({ type: "turn_completed", provider: "claude", usage });
+      events.push({
+        type: "turn_completed",
+        provider: "claude",
+        usage,
+        turnUsage: this.runningTotals.completedTurn(message),
+      });
       return;
     }
     const errorMessage =

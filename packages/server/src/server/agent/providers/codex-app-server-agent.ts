@@ -30,6 +30,7 @@ import {
   type AgentTimelineItem,
   type ToolCallTimelineItem,
   type AgentUsage,
+  type AgentTurnUsage,
   type FetchCatalogOptions,
   type ImportableProviderSession,
   type ImportProviderSessionContext,
@@ -1064,6 +1065,47 @@ export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
     ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
     ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
   };
+}
+
+interface CodexTokenBreakdown {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+}
+
+function readCodexTokenBreakdown(value: unknown): CodexTokenBreakdown | undefined {
+  const record = toObjectRecord(value);
+  if (!record) return undefined;
+  const { inputTokens, cachedInputTokens, outputTokens } = record;
+  if (
+    typeof inputTokens !== "number" ||
+    typeof cachedInputTokens !== "number" ||
+    typeof outputTokens !== "number" ||
+    ![inputTokens, cachedInputTokens, outputTokens].every((n) => Number.isFinite(n) && n >= 0)
+  ) {
+    return undefined;
+  }
+  return { inputTokens, cachedInputTokens, outputTokens };
+}
+
+/**
+ * thread/tokenUsage/updated carries `last` (the latest model request, which toAgentUsage reads
+ * for the context meter) and `total` (the thread's running total). Neither is a turn's spend
+ * on its own: a turn can make many requests. The turn's tokens are the growth of `total`
+ * across the turn, with its starting point recovered from the first update as `total - last`.
+ * Codex reports tokens only, never cost. inputTokens includes cachedInputTokens.
+ */
+function codexTurnTokenUsage(
+  start: CodexTokenBreakdown | undefined,
+  latest: CodexTokenBreakdown | undefined,
+): AgentTurnUsage | undefined {
+  if (!start || !latest) return undefined;
+  const inputTokens = latest.inputTokens - start.inputTokens;
+  const outputTokens = latest.outputTokens - start.outputTokens;
+  const cacheReadTokens = latest.cachedInputTokens - start.cachedInputTokens;
+  // A total that shrank is not a reading this can attribute to the turn.
+  if (inputTokens < 0 || outputTokens < 0 || cacheReadTokens < 0) return undefined;
+  return { inputTokens, outputTokens, cacheReadTokens };
 }
 
 function extractUserText(content: unknown): string | null {
@@ -3493,6 +3535,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   private warnedInvalidNotificationPayloads = new Set<string>();
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
+  // undefined = no token update seen this turn; null = seen, but the turn's start is unrecoverable.
+  private turnTokenStart: CodexTokenBreakdown | null | undefined;
+  private turnTokenLatestTotal: CodexTokenBreakdown | undefined;
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
   private readonly userMessageTurnIndexes = new Map<string, number>();
   private readonly userMessageTurnIds: string[] = [];
@@ -6170,6 +6215,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         type: "turn_completed",
         provider: CODEX_PROVIDER,
         usage: this.latestUsage,
+        turnUsage: codexTurnTokenUsage(this.turnTokenStart ?? undefined, this.turnTokenLatestTotal),
       });
     }
     this.activeForegroundTurnId = null;
@@ -6182,6 +6228,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resetTurnTrackingState(): void {
+    this.turnTokenStart = undefined;
+    this.turnTokenLatestTotal = undefined;
     this.latestPlanResult = null;
     this.emittedItemStartedIds.clear();
     this.emittedItemCompletedIds.clear();
@@ -6231,6 +6279,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private handleTokenUsageUpdatedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "token_usage_updated" }>,
   ): void {
+    const isSubAgentThread =
+      parsed.threadId !== null && this.getSubAgentCallIdForThread(parsed.threadId) !== null;
+    if (!isSubAgentThread) {
+      this.observeTurnTokenTotals(parsed.tokenUsage);
+    }
     this.latestUsage = toAgentUsage(parsed.tokenUsage);
     if (this.latestUsage) {
       this.notifySubscribers({
@@ -6239,6 +6292,25 @@ export class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+  }
+
+  // Root thread only: a sub-agent thread has its own running total, and mixing it in would
+  // turn the difference into noise. Sub-agent spend is therefore not part of the turn's figures.
+  private observeTurnTokenTotals(tokenUsage: unknown): void {
+    const record = toObjectRecord(tokenUsage);
+    const total = readCodexTokenBreakdown(record?.total);
+    if (!total) return;
+    if (this.turnTokenStart === undefined) {
+      const last = readCodexTokenBreakdown(record?.last);
+      this.turnTokenStart = last
+        ? {
+            inputTokens: Math.max(0, total.inputTokens - last.inputTokens),
+            cachedInputTokens: Math.max(0, total.cachedInputTokens - last.cachedInputTokens),
+            outputTokens: Math.max(0, total.outputTokens - last.outputTokens),
+          }
+        : null;
+    }
+    this.turnTokenLatestTotal = total;
   }
 
   private resolveContextCompactionTrigger(itemId?: string): "auto" | "manual" | undefined {
