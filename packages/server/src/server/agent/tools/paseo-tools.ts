@@ -70,10 +70,12 @@ import {
   waitForAgentRunStartWithTimeout,
 } from "../agent-prompt.js";
 import { respondToAgentPermission } from "../permission-response.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
   closeAgentCommand,
+  detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
 } from "../lifecycle-command.js";
@@ -659,6 +661,20 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       : new Date(Date.now() + parseDurationString(expiresIn)).toISOString();
   };
 
+  const buildScheduleRunTimeout = (runTimeout: string | undefined): number | undefined => {
+    if (runTimeout === undefined) {
+      return undefined;
+    }
+    const runTimeoutMs = parseDurationString(runTimeout);
+    if (runTimeoutMs <= 0) {
+      throw new Error("runTimeout must be greater than zero");
+    }
+    return runTimeoutMs;
+  };
+
+  const RUN_TIMEOUT_DESCRIPTION =
+    "Longest a single run may take before it is failed with a timeout error and the schedule moves on (for example: 30m, 2h). Omit for no limit.";
+
   const resolveCallerAgent = () => {
     if (!callerAgentId) {
       return null;
@@ -840,15 +856,32 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return schedule;
   }
 
-  async function requireCallerHeartbeat(id: string) {
+  // Every agent on a daemon is run by the same operator, so an agent-scoped
+  // caller may manage any heartbeat by id — not only the ones aimed at itself.
+  // A supervisor needs this to clean up (or fence) a dead session's wake.
+  async function requireHeartbeat(id: string) {
     if (!callerAgentId) {
       throw new Error("Heartbeat operations require an agent-scoped session");
     }
-    const schedule = await requireScheduleTarget(id, "agent");
-    if (schedule.target.type !== "agent" || schedule.target.agentId !== callerAgentId) {
-      throw new Error(`Heartbeat ${id} does not belong to caller ${callerAgentId}`);
+    return requireScheduleTarget(id, "agent");
+  }
+
+  // Refuses agents that are unknown, internal, or archived; returns the live
+  // labels when the agent is loaded, else the stored ones.
+  async function requireActiveAgent(agentId: string) {
+    const record = await agentStorage.get(agentId);
+    const live = agentManager.getAgent(agentId);
+    if (record) {
+      if (record.internal) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      if (record.archivedAt) {
+        throw new Error(`Agent ${agentId} is archived`);
+      }
+    } else if (!live) {
+      throw new Error(`Agent ${agentId} not found`);
     }
-    return schedule;
+    return { labels: live?.labels ?? record?.labels ?? {} };
   }
   const ProviderModelInputSchema = AgentProviderEnum.trim()
     .refine((value) => value.includes("/"), {
@@ -2190,6 +2223,44 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     },
   );
 
+  // Detach is the supervisor-handoff verb: a supervisor about to be replaced
+  // clears the parent link on the agents it started so archiving it no longer
+  // cascades to them. Per the same-operator trust model any caller may detach any
+  // active agent; a parentless agent is refused (not a silent no-op) so a typo'd
+  // id cannot look like a successful handoff.
+  registerTool(
+    "detach_agent",
+    {
+      title: "Detach agent",
+      description:
+        "Remove an agent's parent link so archiving its former parent no longer archives it. Use it when you are about to be replaced or archived and want the agents you started to survive: detach each one by id. The agent keeps running and keeps its cwd and workspace; it stops being a subagent. Fails if the agent is unknown, archived, or has no parent. Returns the agent's id and its former parent's id.",
+      inputSchema: {
+        agentId: z.string().describe("Agent to detach from its parent."),
+      },
+      outputSchema: {
+        agentId: z.string(),
+        previousParentAgentId: z.string(),
+      },
+    },
+    async ({ agentId }) => {
+      const { labels } = await requireActiveAgent(agentId);
+      if (!getParentAgentIdFromLabels(labels)) {
+        throw new Error(`Agent ${agentId} has no parent to detach from`);
+      }
+      const result = await detachAgentCommand({ agentManager }, agentId);
+      if (!result.previousParentAgentId) {
+        throw new Error(`Agent ${agentId} has no parent to detach from`);
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          agentId: result.agentId,
+          previousParentAgentId: result.previousParentAgentId,
+        }),
+      };
+    },
+  );
+
   registerTool(
     "kill_agent",
     {
@@ -2618,6 +2689,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
+        runTimeout: z.string().optional().describe(RUN_TIMEOUT_DESCRIPTION),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
@@ -2632,12 +2704,14 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       modeId,
       maxRuns,
       expiresIn,
+      runTimeout,
     }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
 
       const expiresAt = buildScheduleExpiry(expiresIn);
+      const runTimeoutMs = buildScheduleRunTimeout(runTimeout);
       const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
@@ -2648,6 +2722,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
+        ...(runTimeoutMs === undefined ? {} : { runTimeoutMs }),
       });
 
       return {
@@ -2662,7 +2737,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Inspect heartbeat",
       description:
-        "Inspect one heartbeat and its run history. A fire that found its target busy is recorded here as a failed run — and it still counts against maxRuns.",
+        "Inspect one heartbeat and its run history. A fire that finds its target mid-turn waits for the target to go idle and then delivers; if the target is still busy when the next fire comes due (or the heartbeat's runTimeout passes, if sooner), the run is recorded here as failed with delivered: false and does not count against maxRuns. A run that hits runTimeout is a failed run with a timeout error, and it does count.",
       inputSchema: {
         id: z.string(),
       },
@@ -2682,7 +2757,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Heartbeat logs",
       description:
-        "Return the run history for one heartbeat: when it fired, whether it was delivered, and why it was not.",
+        "Return the run history for one heartbeat: when it fired, whether it was delivered, and why it was not. A run with delivered: false never reached the agent (it stayed busy) and does not count against maxRuns.",
       inputSchema: {
         id: z.string(),
       },
@@ -2709,7 +2784,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Create heartbeat",
       description:
-        "Create a recurring heartbeat that sends you a prompt on a cron cadence. Reusing the name of an existing heartbeat of yours replaces that heartbeat in place and returns the same id — do not delete the old id afterwards, it is the new heartbeat.",
+        "Create a recurring heartbeat that sends a prompt into an agent on a cron cadence. By default the prompt comes back to you; pass agentId to arm it on another active (existing, non-archived) agent instead, for example one you supervise. Reusing the name of an existing heartbeat on the same target replaces that heartbeat in place and returns the same id — do not delete the old id afterwards, it is the new heartbeat. The same name on a different target is a separate heartbeat.",
       inputSchema: {
         prompt: z.string().trim().min(1, "prompt is required"),
         cron: z.string().trim().min(1, "cron is required"),
@@ -2722,10 +2797,19 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         name: z.string().optional(),
         maxRuns: z.number().int().positive().optional(),
         expiresIn: z.string().optional(),
+        runTimeout: z.string().optional().describe(RUN_TIMEOUT_DESCRIPTION),
+        agentId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe(
+            "Agent the heartbeat fires into. Defaults to you. Must be an existing, non-archived agent.",
+          ),
       },
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, maxRuns, expiresIn }) => {
+    async ({ prompt, cron, timezone, name, maxRuns, expiresIn, runTimeout, agentId }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2733,18 +2817,25 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         throw new Error("create_heartbeat requires an agent-scoped session");
       }
       resolveCallerAgent();
+      const targetAgentId = agentId ?? callerAgentId;
+      if (targetAgentId !== callerAgentId) {
+        await requireActiveAgent(targetAgentId);
+      }
 
       const expiresAt = buildScheduleExpiry(expiresIn);
+      const runTimeoutMs = buildScheduleRunTimeout(runTimeout);
       const schedule = await scheduleService.createOrReplace({
         prompt: prompt.trim(),
         cadence: buildCronScheduleCadence({
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: { type: "agent", agentId: callerAgentId },
+        target: { type: "agent", agentId: targetAgentId },
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
+        ...(runTimeoutMs === undefined ? {} : { runTimeoutMs }),
+        createdByAgentId: callerAgentId,
       });
 
       return {
@@ -2758,7 +2849,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "delete_heartbeat",
     {
       title: "Delete heartbeat",
-      description: "Delete one of your heartbeats.",
+      description:
+        "Delete one heartbeat by id, whichever agent it fires into — yours, or a session you supervise (including one that is archived). Use list_heartbeats to find the id.",
       inputSchema: { id: z.string().min(1) },
       outputSchema: { success: z.boolean() },
     },
@@ -2766,7 +2858,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
-      await requireCallerHeartbeat(id);
+      await requireHeartbeat(id);
       await scheduleService.delete(id);
       return {
         content: [],

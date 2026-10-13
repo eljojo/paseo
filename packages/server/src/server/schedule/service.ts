@@ -1,6 +1,7 @@
 import { formatSystemNotificationPrompt } from "../agent/agent-messages/index.js";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import type { AgentManager } from "../agent/agent-manager.js";
@@ -28,6 +29,11 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 
+// How often a heartbeat re-checks a busy target when the agent manager reports it
+// as waiting (e.g. on a permission prompt) but still in flight, so the event wait
+// returns at once and would otherwise spin.
+const TARGET_BUSY_POLL_INTERVAL_MS = 1000;
+
 // A run failed because its target no longer exists: the agent was deleted or
 // archived, or a new-agent cwd was removed. These are permanent, so the schedule
 // is completed instead of retried until it burns down to its expiry.
@@ -48,6 +54,25 @@ function advanceNextRunAtPast(
     next = computeNextRunAt(cadence, next);
   }
   return next;
+}
+
+// A heartbeat fired while its target agent was mid-turn and the target did not go
+// idle before the wait gave up. The run never reached the target, so it is recorded
+// as undelivered and does not count against maxRuns.
+export class ScheduleTargetBusyError extends Error {
+  constructor(agentId: string) {
+    super(`Agent ${agentId} was still busy; the heartbeat was not delivered`);
+    this.name = "ScheduleTargetBusyError";
+  }
+}
+
+// Handed to a runner so it can stop waiting once its run has been abandoned.
+export interface ScheduleRunControl {
+  // Aborted when the run exceeds the schedule's runTimeoutMs.
+  signal: AbortSignal;
+  // True while the runner is only waiting for its target to go idle (nothing has been
+  // delivered yet). A timeout in that phase is an undelivered run, not a failed one.
+  waitingForTarget: boolean;
 }
 
 function trimOptionalName(value: string | null | undefined): string | null {
@@ -135,8 +160,49 @@ function normalizeMaxRuns(value: number | null | undefined): number | null {
   return value;
 }
 
+function normalizeRunTimeoutMs(value: number | null | undefined): number | null {
+  if (value == null) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("runTimeoutMs must be a positive integer");
+  }
+  return value;
+}
+
+function formatRunTimeout(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+  const seconds = Math.floor((ms % 60_000) / 1000);
+  const millis = ms % 1000;
+  const parts = [
+    hours > 0 ? `${hours}h` : "",
+    minutes > 0 ? `${minutes}m` : "",
+    seconds > 0 ? `${seconds}s` : "",
+    millis > 0 ? `${millis}ms` : "",
+  ].filter(Boolean);
+  return parts.join("") || "0s";
+}
+
+// A run that never reached its target (delivered === false) is not a use of the
+// schedule's maxRuns.
 function countCompletedRuns(schedule: StoredSchedule): number {
-  return schedule.runs.filter((run) => run.status !== "running").length;
+  return schedule.runs.filter((run) => run.status !== "running" && run.delivered !== false).length;
+}
+
+// The slot a busy-target wait gives up at. A claim advances nextRunAt, except for the
+// final allowed run, which clears it; that run still has a following slot to bound its
+// wait by, because an undelivered run is re-armed (see finishRun). A paused schedule's
+// manual run has no upcoming slot.
+function nextSlotForBusyWait(schedule: StoredSchedule, runId: string): Date | null {
+  if (schedule.nextRunAt) {
+    return new Date(schedule.nextRunAt);
+  }
+  const run = schedule.runs.find((candidate) => candidate.id === runId);
+  if (schedule.status !== "active" || !run) {
+    return null;
+  }
+  return computeNextRunAt(schedule.cadence, new Date(run.scheduledFor));
 }
 
 function shouldArchiveScheduleRunWorkspace(input: {
@@ -227,6 +293,7 @@ type ScheduleAgentManager = Pick<
     | "runAgent"
     | "waitForAgentEvent"
     | "waitForAgentClose"
+    | "cancelAgentRun"
   >;
 
 interface ScheduleWorkspaceCreateInput {
@@ -248,7 +315,11 @@ export interface ScheduleServiceOptions {
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
   now?: () => Date;
-  runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
+  runner?: (
+    schedule: StoredSchedule,
+    runId: string,
+    control: ScheduleRunControl,
+  ) => Promise<ScheduleExecutionResult>;
 }
 
 export class ScheduleService {
@@ -268,6 +339,7 @@ export class ScheduleService {
   private readonly runner: (
     schedule: StoredSchedule,
     runId: string,
+    control: ScheduleRunControl,
   ) => Promise<ScheduleExecutionResult>;
   private readonly runningScheduleIds = new Set<string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -282,7 +354,9 @@ export class ScheduleService {
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
     this.now = options.now ?? (() => new Date());
-    this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
+    this.runner =
+      options.runner ??
+      ((schedule, runId, control) => this.executeSchedule(schedule, runId, control));
   }
 
   async start(): Promise<void> {
@@ -344,6 +418,8 @@ export class ScheduleService {
       pausedAt: null,
       expiresAt: input.expiresAt ?? null,
       maxRuns: normalizeMaxRuns(input.maxRuns),
+      runTimeoutMs: normalizeRunTimeoutMs(input.runTimeoutMs),
+      createdByAgentId: input.createdByAgentId ?? null,
       runs: [],
     };
   }
@@ -380,6 +456,11 @@ export class ScheduleService {
           nextRunAt: nextRunAt.toISOString(),
           expiresAt: input.expiresAt ?? null,
           maxRuns: normalizeMaxRuns(input.maxRuns),
+          runTimeoutMs: normalizeRunTimeoutMs(input.runTimeoutMs),
+          // An upsert records the latest caller, not the original one: that caller set
+          // the cadence and prompt the schedule now runs with, and a caller that is not
+          // an agent clears the field rather than leaving a stale agent id on it.
+          createdByAgentId: input.createdByAgentId ?? null,
           updatedAt: now.toISOString(),
         };
       },
@@ -756,8 +837,36 @@ export class ScheduleService {
         ({ schedule: scheduleWithRun, runId } = claimed);
       }
 
+      const controller = new AbortController();
+      const control: ScheduleRunControl = { signal: controller.signal, waitingForTarget: false };
+      const timeoutMs = scheduleWithRun.runTimeoutMs ?? null;
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
       try {
-        const result = await this.runner(scheduleWithRun, runId);
+        const runnerPromise = this.runner(scheduleWithRun, runId, control);
+        // After a timeout the runner is abandoned; its late rejection must not surface
+        // as an unhandled rejection.
+        runnerPromise.catch(() => undefined);
+        const outcome =
+          timeoutMs === null
+            ? await runnerPromise
+            : await Promise.race([
+                runnerPromise,
+                new Promise<typeof RUN_TIMED_OUT>((resolve) => {
+                  timeoutTimer = setTimeout(() => resolve(RUN_TIMED_OUT), timeoutMs);
+                }),
+              ]);
+        if (outcome === RUN_TIMED_OUT) {
+          await this.finishTimedOutRun({
+            schedule: scheduleWithRun,
+            runId,
+            timeoutMs: timeoutMs ?? 0,
+            controller,
+            control,
+            manual,
+          });
+          return;
+        }
+        const result = outcome;
         await this.finishRun({
           scheduleId: schedule.id,
           runId,
@@ -778,10 +887,82 @@ export class ScheduleService {
           error: error instanceof Error ? error.message : String(error),
           targetGone: error instanceof ScheduleTargetGoneError,
           manual,
+          ...(error instanceof ScheduleTargetBusyError ? { delivered: false as const } : {}),
         });
+      } finally {
+        if (timeoutTimer !== null) {
+          clearTimeout(timeoutTimer);
+        }
       }
     } finally {
       this.runningScheduleIds.delete(schedule.id);
+    }
+  }
+
+  // The run outlasted the schedule's runTimeoutMs. Stop waiting for it and record the
+  // outcome now: the runner's own result, if it ever arrives, is dropped because this
+  // is the only finishRun for the run.
+  private async finishTimedOutRun(params: {
+    schedule: StoredSchedule;
+    runId: string;
+    timeoutMs: number;
+    controller: AbortController;
+    control: ScheduleRunControl;
+    manual: boolean;
+  }): Promise<void> {
+    const { schedule, runId, timeoutMs, controller, control, manual } = params;
+    const stillWaitingForTarget = control.waitingForTarget;
+    const timeoutError = new Error(`Run timed out after ${formatRunTimeout(timeoutMs)}`);
+    controller.abort(timeoutError);
+
+    // Best-effort stop of the stuck work. Only a new-agent run owns its agent; an
+    // agent target's turn belongs to someone else, so the wait is abandoned and the
+    // turn is left alone.
+    if (schedule.target.type === "new-agent") {
+      const stuckAgentId = await this.findRunAgentId(schedule.id, runId);
+      if (stuckAgentId) {
+        void this.interruptTimedOutAgent(schedule.id, runId, stuckAgentId);
+      }
+    }
+
+    await this.finishRun({
+      scheduleId: schedule.id,
+      runId,
+      status: "failed",
+      agentId: null,
+      output: null,
+      error:
+        stillWaitingForTarget && schedule.target.type === "agent"
+          ? new ScheduleTargetBusyError(schedule.target.agentId).message
+          : timeoutError.message,
+      targetGone: false,
+      manual,
+      ...(stillWaitingForTarget ? { delivered: false as const } : {}),
+    });
+  }
+
+  private async findRunAgentId(scheduleId: string, runId: string): Promise<string | null> {
+    try {
+      const stored = await this.store.get(scheduleId);
+      return stored?.runs.find((run) => run.id === runId)?.agentId ?? null;
+    } catch (error) {
+      this.logger.warn({ err: error, scheduleId, runId }, "Failed to look up timed-out run agent");
+      return null;
+    }
+  }
+
+  private async interruptTimedOutAgent(
+    scheduleId: string,
+    runId: string,
+    agentId: string,
+  ): Promise<void> {
+    try {
+      await this.agentManager.cancelAgentRun(agentId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, scheduleId, runId, agentId },
+        "Failed to cancel the agent of a timed-out scheduled run",
+      );
     }
   }
 
@@ -858,6 +1039,8 @@ export class ScheduleService {
     error: string | null;
     targetGone: boolean;
     manual: boolean;
+    // false when the run never reached its target; see countCompletedRuns.
+    delivered?: false;
   }): Promise<void> {
     const updatedSchedule = await this.store.update(params.scheduleId, (schedule) => {
       const now = this.now();
@@ -870,6 +1053,7 @@ export class ScheduleService {
               agentId: params.agentId ?? run.agentId,
               output: params.output,
               error: params.error,
+              ...(params.delivered === false ? { delivered: false } : {}),
             }
           : run,
       );
@@ -896,6 +1080,23 @@ export class ScheduleService {
           ...updated,
           nextRunAt: null,
         };
+      } else if (params.delivered === false) {
+        // The wait for a busy target gave up when the next slot came due. That slot
+        // was not consumed by this run, so leave it due for the next tick instead of
+        // skipping it as an elapsed one.
+        if (updated.nextRunAt === null) {
+          // The claim took this for the final allowed run and cleared the cursor, but an
+          // undelivered run does not count against maxRuns (see countCompletedRuns), so
+          // the schedule still has runs left. Re-arm the slot after the one this run took.
+          const finishedRun = completedRuns.find((run) => run.id === params.runId)!;
+          updated = {
+            ...updated,
+            nextRunAt: computeNextRunAt(
+              updated.cadence,
+              new Date(finishedRun.scheduledFor),
+            ).toISOString(),
+          };
+        }
       } else {
         // A final slot has no successor until its run limit is raised or cleared.
         // Every runner invocation has a recorded run with this id.
@@ -940,46 +1141,10 @@ export class ScheduleService {
   private async executeSchedule(
     schedule: StoredSchedule,
     runId: string,
+    control: ScheduleRunControl = { signal: new AbortController().signal, waitingForTarget: false },
   ): Promise<ScheduleExecutionResult> {
     if (schedule.target.type === "agent") {
-      const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
-      const record = await this.agentStorage.get(schedule.target.agentId);
-      if (!record) {
-        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} no longer exists`);
-      }
-      if (record.archivedAt) {
-        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} is archived`);
-      }
-
-      const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.logger,
-      });
-      if (this.agentManager.hasInFlightRun(agent.id)) {
-        throw new Error(`Agent ${agent.id} already has an active run`);
-      }
-      await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
-        replaceRunning: true,
-        activeTurnBehavior: "steer",
-      });
-      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-      });
-      if (waitResult.permission) {
-        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
-      }
-      if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
-      }
-      return {
-        agentId: agent.id,
-        output: buildRunOutput({
-          output: null,
-          timelineText: "",
-          finalText: waitResult.lastMessage ?? "",
-        }),
-      };
+      return this.deliverToAgentTarget(schedule, schedule.target.agentId, runId, control);
     }
 
     const config = schedule.target.type === "new-agent" ? schedule.target.config : null;
@@ -1030,6 +1195,7 @@ export class ScheduleService {
       const result = await this.agentManager.runAgent(agent.id, schedule.prompt);
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,
+        signal: control.signal,
       });
       if (result.canceled) {
         throw new Error(`Scheduled agent ${agent.id} was canceled`);
@@ -1072,6 +1238,108 @@ export class ScheduleService {
     }
   }
 
+  private async deliverToAgentTarget(
+    schedule: StoredSchedule,
+    agentId: string,
+    runId: string,
+    control: ScheduleRunControl,
+  ): Promise<ScheduleExecutionResult> {
+    const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
+    const record = await this.agentStorage.get(agentId);
+    if (!record) {
+      throw new ScheduleTargetGoneError(`Agent ${agentId} no longer exists`);
+    }
+    if (record.archivedAt) {
+      throw new ScheduleTargetGoneError(`Agent ${agentId} is archived`);
+    }
+
+    const agent = await ensureAgentLoaded(agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.logger,
+    });
+    if (this.agentManager.hasInFlightRun(agent.id)) {
+      await this.waitForTargetIdle(agent.id, schedule, runId, control);
+    }
+    // The run may have been abandoned while the target was busy and gone idle in the
+    // same instant; do not deliver on behalf of a run that has been recorded as over.
+    control.signal.throwIfAborted();
+    await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+    });
+    const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
+      waitForActive: true,
+      signal: control.signal,
+    });
+    if (waitResult.permission) {
+      throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
+    }
+    if (waitResult.status === "error") {
+      throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+    }
+    return {
+      agentId: agent.id,
+      output: buildRunOutput({
+        output: null,
+        timelineText: "",
+        finalText: waitResult.lastMessage ?? "",
+      }),
+    };
+  }
+
+  // Waits for a busy heartbeat target to go idle. Gives up, with
+  // ScheduleTargetBusyError, when the next slot comes due (the claim has already
+  // advanced nextRunAt to it) or the run is abandoned by its timeout.
+  private async waitForTargetIdle(
+    agentId: string,
+    schedule: StoredSchedule,
+    runId: string,
+    control: ScheduleRunControl,
+  ): Promise<void> {
+    const waitController = new AbortController();
+    const abandon = () => waitController.abort(control.signal.reason);
+    const nextSlot = nextSlotForBusyWait(schedule, runId);
+    const untilNextSlotMs = nextSlot ? nextSlot.getTime() - this.now().getTime() : 0;
+    let slotTimer: ReturnType<typeof setTimeout> | null = null;
+    control.waitingForTarget = true;
+    if (control.signal.aborted) {
+      abandon();
+    } else {
+      control.signal.addEventListener("abort", abandon, { once: true });
+    }
+    if (untilNextSlotMs > 0) {
+      slotTimer = setTimeout(() => waitController.abort(), untilNextSlotMs);
+    } else {
+      // No upcoming slot to wait for (manual run of a paused schedule).
+      waitController.abort();
+    }
+    try {
+      while (this.agentManager.hasInFlightRun(agentId)) {
+        if (waitController.signal.aborted) {
+          throw new ScheduleTargetBusyError(agentId);
+        }
+        try {
+          await this.agentManager.waitForAgentEvent(agentId, { signal: waitController.signal });
+          if (this.agentManager.hasInFlightRun(agentId)) {
+            await sleepUnlessAborted(TARGET_BUSY_POLL_INTERVAL_MS, waitController.signal);
+          }
+        } catch (error) {
+          if (waitController.signal.aborted) {
+            throw new ScheduleTargetBusyError(agentId);
+          }
+          throw error;
+        }
+      }
+    } finally {
+      if (slotTimer !== null) {
+        clearTimeout(slotTimer);
+      }
+      control.signal.removeEventListener("abort", abandon);
+      control.waitingForTarget = false;
+    }
+  }
+
   private async createScheduleRunWorkspace(
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
     prompt: string,
@@ -1099,6 +1367,13 @@ export class ScheduleService {
       throw error;
     }
   }
+}
+
+const RUN_TIMED_OUT = Symbol("run-timed-out");
+
+// Resolves early, without rejecting, when the signal aborts.
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return delay(ms, undefined, { signal }).catch(() => undefined);
 }
 
 function buildScheduleAgentConfig(
