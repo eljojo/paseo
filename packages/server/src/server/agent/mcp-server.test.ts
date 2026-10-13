@@ -5875,6 +5875,80 @@ describe("create_schedule MCP tool", () => {
     });
   });
 
+  describe("modeId", () => {
+    async function scheduleCreatorFor(callerProvider: string | null) {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      if (callerProvider) {
+        spies.agentManager.getAgent.mockReturnValue({
+          id: "parent-agent",
+          provider: callerProvider,
+          cwd: REPO_CWD,
+          lifecycle: "idle",
+          currentModeId: "default",
+          availableModes: [],
+          config: { title: "Parent agent" },
+        } as ManagedAgent);
+      }
+      const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+        createStoredSchedule(input),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        scheduleService: { createOrReplace } as unknown as ScheduleService,
+        ...(callerProvider ? { callerAgentId: "parent-agent" } : {}),
+        logger,
+      });
+      return { tool: registeredTool(server, "create_schedule"), createOrReplace };
+    }
+
+    it("stores an explicit modeId when a claude caller schedules a codex agent", async () => {
+      const { tool } = await scheduleCreatorFor("claude");
+
+      const response = await invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        provider: "codex",
+        modeId: "auto",
+      });
+
+      expect(response.structuredContent.target).toMatchObject({
+        type: "new-agent",
+        config: { provider: "codex", modeId: "auto" },
+      });
+    });
+
+    it("lets an explicit modeId override the inherited mode of a same-provider caller", async () => {
+      const { tool } = await scheduleCreatorFor("codex");
+
+      const response = await invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        modeId: "full-access",
+      });
+
+      expect(response.structuredContent.target).toMatchObject({
+        config: { provider: "codex", modeId: "full-access" },
+      });
+    });
+
+    it("stores an explicit modeId without a caller agent", async () => {
+      const { tool } = await scheduleCreatorFor(null);
+
+      const response = await invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        cron: "*/5 * * * *",
+        provider: "codex",
+        modeId: "auto",
+      });
+
+      expect(response.structuredContent.target).toMatchObject({
+        config: { provider: "codex", modeId: "auto" },
+      });
+    });
+  });
+
   it("passes timezone through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
