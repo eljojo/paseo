@@ -952,7 +952,7 @@ function createToolCatalog(
 
   const buildCallerAgentScheduleConfig = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
-    params?: { provider?: string; cwd?: string },
+    params?: { provider?: string; cwd?: string; modeId?: string },
   ) => {
     const hasProviderOverride = params?.provider !== undefined;
     const resolvedProviderModel = hasProviderOverride
@@ -968,14 +968,17 @@ function createToolCatalog(
     } else if (!hasProviderOverride && callerAgent.config.model) {
       resolvedModel = callerAgent.config.model;
     }
+    // An explicit modeId wins; the caller's mode is only meaningful to the same provider.
+    let resolvedModeId: string | undefined;
+    if (params?.modeId) {
+      resolvedModeId = params.modeId;
+    } else if (callerAgent.provider === resolvedProvider) {
+      resolvedModeId = callerAgent.currentModeId ?? undefined;
+    }
     return {
       provider: resolvedProvider,
       cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : callerAgent.cwd,
-      ...(callerAgent.currentModeId && callerAgent.provider === resolvedProvider
-        ? {
-            modeId: callerAgent.currentModeId,
-          }
-        : {}),
+      ...(resolvedModeId ? { modeId: resolvedModeId } : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
       ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider),
     };
@@ -985,6 +988,7 @@ function createToolCatalog(
     provider?: string;
     cwd?: string;
     isolation?: "local" | "worktree";
+    modeId?: string;
   }) => {
     const callerAgent = resolveCallerAgent();
     if (callerAgent) {
@@ -1010,6 +1014,7 @@ function createToolCatalog(
       config: {
         provider: resolvedProviderModel.provider,
         cwd: params?.cwd?.trim() ? expandUserPath(params.cwd) : process.cwd(),
+        ...(params?.modeId ? { modeId: params.modeId } : {}),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(params?.isolation ? { isolation: params.isolation } : {}),
       },
@@ -2677,13 +2682,32 @@ function createToolCatalog(
           ),
           cwd: z.string().optional(),
           isolation: z.enum(["local", "worktree"]).optional(),
+          modeId: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe(
+              "Session mode for each run's new agent. Defaults to the caller's mode when the provider matches.",
+            ),
           maxRuns: z.number().int().positive().optional(),
           expiresIn: scheduleDurationInputSchema.optional(),
         })
         .superRefine(addScheduleCadenceIssue),
       outputSchema: ScheduleSummarySchema.shape,
     },
-    async ({ prompt, cron, timezone, name, provider, cwd, isolation, maxRuns, expiresIn }) => {
+    async ({
+      prompt,
+      cron,
+      timezone,
+      name,
+      provider,
+      cwd,
+      isolation,
+      modeId,
+      maxRuns,
+      expiresIn,
+    }) => {
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
@@ -2695,7 +2719,7 @@ function createToolCatalog(
           cron,
           ...(timezone !== undefined ? { timezone } : {}),
         }),
-        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation }),
+        target: resolveNewAgentScheduleTarget({ provider, cwd, isolation, modeId }),
         ...(name?.trim() ? { name: name.trim() } : {}),
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
