@@ -81,7 +81,7 @@ Workspaces decide where work happens; agent parentage decides who owns the work.
 - A top-level MCP caller without a workspace gets a new local workspace.
 - Create a workspace first when you need worktree isolation, a specific branch, or a pull request checkout.
 
-`create_agent` takes `detached` for an agent that should not be yours: it stays out of your subagent track and survives your own archiving, at the cost of the finish notification, which is only delivered to a parent. Detaching an agent that already exists is still a manual user action in the app or CLI.
+`create_agent` takes `detached` for an agent that should not be yours: it stays out of your subagent track and survives your own archiving, at the cost of the finish notification, which is only delivered to a parent. Detaching an agent that already exists is a user action in the app or CLI, or a `detach_agent` call.
 
 ## Tools
 
@@ -92,9 +92,11 @@ Workspaces decide where work happens; agent parentage decides who owns the work.
 | `create_agent`       | Create an agent, optionally placing it in an existing workspace with `workspaceId`, or `detached` to create a sibling rather than a subagent. Use `initialPrompt` to start work; returns without waiting for completion. |
 | `send_agent_prompt`  | Send a prompt using `agentId` and `prompt`; returns without waiting for completion.                                                                                                                                      |
 | `get_agent_status`   | Return the latest snapshot for an agent.                                                                                                                                                                                 |
+| `get_agent_usage`    | Return an agent's cumulative tokens and cost over its completed turns. `null` means unknown, not zero.                                                                                                                   |
 | `list_agents`        | List recent agents as compact metadata; `includeBackground: true` includes background work.                                                                                                                              |
 | `cancel_agent`       | Abort an agent's current run but keep the agent alive.                                                                                                                                                                   |
 | `archive_agent`      | Soft-delete an agent and remove it from the active list.                                                                                                                                                                 |
+| `detach_agent`       | Remove an agent's parent link so archiving its former parent no longer archives it.                                                                                                                                      |
 | `kill_agent`         | Terminate an agent session permanently.                                                                                                                                                                                  |
 | `update_agent`       | Update an agent name, labels, or runtime settings such as mode/model/thinking/features.                                                                                                                                  |
 | `get_agent_activity` | Return recent agent timeline entries as a curated summary.                                                                                                                                                               |
@@ -139,24 +141,24 @@ See [Git worktrees](/docs/worktrees#scripts-and-services) for `paseo.json` confi
 
 Both use the same cron engine, but they have deliberately different interfaces.
 
-| Tool                | Function                                                                      |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `create_schedule`   | Create a cron schedule that starts a new agent for each run.                  |
-| `list_schedules`    | List new-agent schedules managed by the daemon.                               |
-| `inspect_schedule`  | Inspect a schedule and its run history.                                       |
-| `pause_schedule`    | Pause an active schedule.                                                     |
-| `resume_schedule`   | Resume a paused schedule.                                                     |
-| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings.  |
-| `schedule_logs`     | Return recent runs and output for a schedule.                                 |
-| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                   |
-| `delete_schedule`   | Delete a new-agent schedule permanently.                                      |
-| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent.                   |
-| `list_heartbeats`   | List the heartbeats firing into agents on this host, optionally one agent's.  |
-| `inspect_heartbeat` | Inspect one heartbeat and its run history.                                    |
-| `heartbeat_logs`    | Return one heartbeat's runs: when it fired, and why a fire was not delivered. |
-| `delete_heartbeat`  | Delete one of the current agent's heartbeats.                                 |
+| Tool                | Function                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `create_schedule`   | Create a cron schedule that starts a new agent for each run, with optional `modeId` and `runTimeout`.    |
+| `list_schedules`    | List new-agent schedules managed by the daemon.                                                          |
+| `inspect_schedule`  | Inspect a schedule and its run history.                                                                  |
+| `pause_schedule`    | Pause an active schedule.                                                                                |
+| `resume_schedule`   | Resume a paused schedule.                                                                                |
+| `update_schedule`   | Change a schedule's cron, prompt, agent settings, limits, or other settings.                             |
+| `schedule_logs`     | Return recent runs and output for a schedule.                                                            |
+| `run_schedule_once` | Start one new-agent schedule run without changing its cron.                                              |
+| `delete_schedule`   | Delete a new-agent schedule permanently.                                                                 |
+| `create_heartbeat`  | Send a recurring cron-backed prompt into the current agent, or into another active agent with `agentId`. |
+| `list_heartbeats`   | List the heartbeats firing into agents on this host, optionally one agent's.                             |
+| `inspect_heartbeat` | Inspect one heartbeat and its run history.                                                               |
+| `heartbeat_logs`    | Return one heartbeat's runs: when it fired, and why a fire was not delivered.                            |
+| `delete_heartbeat`  | Delete any heartbeat by id, whichever agent it fires into.                                               |
 
-`list_heartbeats` returns the same summary shape as `list_schedules`, and heartbeat ids are inspected with `inspect_heartbeat` and `heartbeat_logs` — the schedule verbs reject them, because every verb in this section is scoped to one target type. A fire that finds its target agent mid-run is refused and recorded as a failed run, and a failed run still counts against `maxRuns`: a heartbeat armed on a busy session can exhaust its budget without ever delivering a prompt. MCP heartbeats are ephemeral: create or delete them. To change one, delete it and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
+`list_heartbeats` returns the same summary shape as `list_schedules`, and heartbeat ids are inspected with `inspect_heartbeat` and `heartbeat_logs` — the schedule verbs reject them, because every verb in this section is scoped to one target type. A fire that finds its target mid-turn waits for the target to go idle and then delivers. If the target is still busy when the next fire comes due, or when the heartbeat's `runTimeout` passes if that is sooner, the run is recorded as failed with `delivered: false` and does not count against `maxRuns`; `heartbeat_logs` shows which runs were delivered. A run that hits `runTimeout` is a failed run with a timeout error, and it does count. `create_heartbeat` and `create_schedule` take `runTimeout` (for example `30m`); omit it for no limit. Reusing the name of an existing heartbeat on the same target replaces it in place and returns the same id, so do not delete the old id afterwards; the same name on a different target is a separate heartbeat. A heartbeat's `createdByAgentId` is the agent whose `create_heartbeat` call last created or replaced it. MCP heartbeats have no update tool: create again with the same name, or delete and create a replacement. Pause, resume, update, inspect, logs, and run-once apply to new-agent schedules only.
 
 ### Agent profiles
 

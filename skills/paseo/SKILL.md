@@ -59,7 +59,7 @@ Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, an
 
 Agent-scoped creation always creates your subagent. Omit `workspaceId` to use your current workspace; pass a workspace returned by `create_workspace` for isolated delegation. Placement never changes parentage.
 
-Detach is an explicit user action in the subagents track, not an agent tool. A cross-workspace child remains your subagent even though it also appears as a normal tab in its workspace.
+To let agents you started survive your own archiving, call **`detach_agent`** with each agent's id. It fails if the agent is unknown, archived, or has no parent. A cross-workspace child remains your subagent even though it also appears as a normal tab in its workspace.
 
 Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false` only for truly fire-and-forget agents.
 
@@ -90,19 +90,21 @@ If no profile fits, or no profiles are configured, use the provider discovery to
 
 **`list_models`** — full model list for one provider. Use only when you need model IDs or thinking options; the list can be large.
 
+**`get_agent_usage`** — `{ agentId? }`; omit `agentId` to read your own. Cumulative tokens and cost over the agent's completed turns; the turn in flight is not included. A `null` figure is unknown, never zero, and `complete: false` means the sums are lower bounds. Claude's `costUsd` is the SDK's estimate, not an invoice; Codex reports tokens only, so its `costUsd` stays `null`. `providerNotes` spells out the basis for the agent's provider.
+
 **`inspect_provider`** — compact provider capability and feature inspection. Required: `provider`; pass `cwd` when you are not in an agent-scoped session. Optional: `settings` with draft `model`, `modeId`, `thinkingOptionId`, and `features`.
 
 Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look for `fast_mode` and pass `settings: { features: { "fast_mode": true } }` to `create_agent` or `update_agent`.
 
 ## Schedules and heartbeats
 
-**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `maxRuns`, `expiresIn`. Use when the recurring work should live in fresh agents.
+**`create_schedule`** — starts a new agent on a cron cadence. Required: `prompt`, `cron`, `provider`. Optional: `timezone`, `name`, `cwd`, `modeId`, `maxRuns`, `expiresIn`, `runTimeout`. Use when the recurring work should live in fresh agents.
 
-**`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `maxRuns`, `expiresIn`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation.
+**`create_heartbeat`** — sends you a prompt on a cron cadence. Required: `prompt`, `cron`. Optional: `timezone`, `name`, `agentId`, `maxRuns`, `expiresIn`, `runTimeout`. Use for reminders, PR/build babysitting, and status checks that should return to this conversation. Pass `agentId` to arm it on another active agent instead, such as one you supervise. Reusing a `name` on the same target replaces that heartbeat in place and returns the same id, so do not delete the old id afterwards.
 
-**`delete_heartbeat`** stops it. MCP intentionally exposes no heartbeat update tool; delete and recreate when its task or cadence changes.
+**`delete_heartbeat`** stops any heartbeat by id, whichever agent it fires into. **`list_heartbeats`** finds ids and **`heartbeat_logs`** shows a heartbeat's run history (**`inspect_heartbeat`** returns the full record). A fire that finds its target mid-turn waits for it to go idle; if it is still busy when the next fire comes due, the run is recorded with `delivered: false` and does not count against `maxRuns`. MCP intentionally exposes no heartbeat update tool; create again with the same `name` on the same target, or delete and recreate, when its task or cadence changes.
 
-Schedules have the full list/inspect/update/pause/resume/run-once/log/delete surface. Heartbeats deliberately do not.
+Schedules have the full list/inspect/update/pause/resume/run-once/log/delete surface. Heartbeats deliberately do not: they have create, list, inspect, logs, and delete.
 
 ## Waiting
 
