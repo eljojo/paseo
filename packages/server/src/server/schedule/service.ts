@@ -558,21 +558,46 @@ export class ScheduleService {
   async tick(): Promise<void> {
     const now = this.now();
     const schedules = await this.store.list();
-    for (const schedule of schedules) {
-      if (schedule.status !== "active" || !schedule.nextRunAt) {
-        continue;
+    // Runs are started without being awaited so one slow agent turn cannot hold up
+    // every schedule listed after it. The tick still resolves only once all of them
+    // have finished.
+    const runs: Array<Promise<void>> = [];
+    let results: Array<PromiseSettledResult<void>> = [];
+    try {
+      for (const schedule of schedules) {
+        if (schedule.status !== "active" || !schedule.nextRunAt) {
+          continue;
+        }
+        if (this.runningScheduleIds.has(schedule.id)) {
+          continue;
+        }
+        if (shouldCompleteSchedule(schedule, now)) {
+          await this.completeScheduleIfDue(schedule.id, now);
+          continue;
+        }
+        if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
+          continue;
+        }
+        const run = this.runSchedule(schedule, now);
+        // Marks the rejection as handled while the loop is still awaiting something
+        // else; the outcome is read from the allSettled below.
+        run.catch(() => undefined);
+        runs.push(run);
       }
-      if (this.runningScheduleIds.has(schedule.id)) {
-        continue;
-      }
-      if (shouldCompleteSchedule(schedule, now)) {
-        await this.completeScheduleIfDue(schedule.id, now);
-        continue;
-      }
-      if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
-        continue;
-      }
-      await this.runSchedule(schedule, now);
+    } finally {
+      results = await Promise.allSettled(runs);
+    }
+    // Runner failures are recorded on the run, so a rejection here means the run
+    // could not be recorded. Surface it to the caller only after every other run
+    // has settled; the interval logs it.
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    for (const error of failures.slice(1)) {
+      this.logger.error({ err: error }, "Failed to run schedule");
+    }
+    if (failures.length > 0) {
+      throw failures[0];
     }
   }
 
