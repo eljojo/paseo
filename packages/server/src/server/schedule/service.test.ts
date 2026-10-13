@@ -3592,6 +3592,264 @@ describe("ScheduleService", () => {
     expect(await service.list()).toHaveLength(1);
   });
 
+  test("overlapping ticks run each due schedule once per slot and do not skip the next slot", async () => {
+    // The daemon ticks every second on a bare setInterval, so a new tick starts
+    // while an earlier one is still awaiting a long agent turn. The stalled tick
+    // walks a stale snapshot of every schedule after the one it is stuck on.
+    const slowAgentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const fastAgentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let slowStarted!: () => void;
+    const slowRunStarted = new Promise<void>((resolve) => {
+      slowStarted = resolve;
+    });
+    let releaseSlow!: () => void;
+    const slowTurnEnded = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const runsStarted: Array<{ prompt: string; scheduledFor: string | undefined }> = [];
+
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async (schedule, runId) => {
+        runsStarted.push({
+          prompt: schedule.prompt,
+          scheduledFor: schedule.runs.find((run) => run.id === runId)?.scheduledFor,
+        });
+        if (schedule.prompt === "slow") {
+          slowStarted();
+          await slowTurnEnded;
+        }
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    // createdAt orders store.list(), so the slow schedule is walked first.
+    const slow = await service.create({
+      prompt: "slow",
+      cadence: { type: "cron", expression: "* * * * *" },
+      target: { type: "agent", agentId: slowAgentId },
+    });
+    now = new Date("2026-01-01T00:00:00.001Z");
+    const fast = await service.create({
+      prompt: "fast",
+      cadence: { type: "cron", expression: "* * * * *" },
+      target: { type: "agent", agentId: fastAgentId },
+    });
+    expect(slow.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+    expect(fast.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const stalledTick = service.tick();
+    await slowRunStarted;
+
+    for (const second of [1, 2, 3]) {
+      now = new Date(`2026-01-01T00:01:0${second}.000Z`);
+      await service.tick();
+    }
+
+    releaseSlow();
+    await stalledTick;
+
+    const slowAfter = await service.inspect(slow.id);
+    const fastAfter = await service.inspect(fast.id);
+    expect.soft(runsStarted.map((run) => run.prompt).sort()).toEqual(["fast", "slow"]);
+    expect
+      .soft(slowAfter.runs.map((run) => run.scheduledFor))
+      .toEqual(["2026-01-01T00:01:00.000Z"]);
+    expect
+      .soft(fastAfter.runs.map((run) => run.scheduledFor))
+      .toEqual(["2026-01-01T00:01:00.000Z"]);
+    expect.soft(slowAfter.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+    expect.soft(fastAfter.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("a run that outlasts its slot is followed by exactly one later run", async () => {
+    let releaseRun!: () => void;
+    let runStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      runStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    let runCount = 0;
+
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => {
+        runCount += 1;
+        if (runCount === 1) {
+          runStarted();
+          await gate;
+        }
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    const created = await service.create({
+      prompt: "long",
+      cadence: { type: "every", everyMs: 60_000 },
+      runOnCreate: false,
+      target: { type: "agent", agentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const firstTick = service.tick();
+    await started;
+
+    // The run is still going when the 00:02 slot passes; the busy schedule is skipped.
+    now = new Date("2026-01-01T00:02:30.000Z");
+    await service.tick();
+    expect(runCount).toBe(1);
+
+    releaseRun();
+    await firstTick;
+
+    // Finishing past the 00:02 slot skips it instead of replaying it.
+    expect((await service.inspect(created.id)).nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+    await service.tick();
+    expect(runCount).toBe(1);
+
+    now = new Date("2026-01-01T00:03:00.000Z");
+    await service.tick();
+    await service.tick();
+
+    const after = await service.inspect(created.id);
+    expect(after.runs.map((run) => run.scheduledFor)).toEqual([
+      "2026-01-01T00:01:00.000Z",
+      "2026-01-01T00:03:00.000Z",
+    ]);
+    expect(after.runs.map((run) => run.status)).toEqual(["succeeded", "succeeded"]);
+    expect(after.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
+  });
+
+  // Re-creating a heartbeat while its own run is in flight. Kept flat rather than in a
+  // nested describe so the tests stay within the lint's callback-nesting limit.
+  {
+    const agentId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const heartbeat = {
+      name: "babysit-pr PR 1",
+      prompt: "check the PR",
+      cadence: { type: "cron", expression: "* * * * *" },
+      target: { type: "agent", agentId },
+    } as const;
+
+    function createGatedService() {
+      let runCount = 0;
+      let runStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        runStarted = resolve;
+      });
+      let releaseRun!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseRun = resolve;
+      });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: async () => {
+          runCount += 1;
+          if (runCount === 1) {
+            runStarted();
+            await gate;
+          }
+          return { agentId: null, output: "ok" };
+        },
+      });
+      return { service, started, releaseRun: () => releaseRun(), runCount: () => runCount };
+    }
+
+    test("re-creating a heartbeat mid-run keeps the next slot it computed", async () => {
+      // create_heartbeat is how an agent re-arms its heartbeat from inside the turn the
+      // heartbeat delivered: same name, cadence and target, so the store upserts the
+      // schedule that is mid-run. The run finishing afterwards must not advance past
+      // the slot the re-creation just set.
+      const { service, started, releaseRun, runCount } = createGatedService();
+      const created = await service.createOrReplace(heartbeat);
+      expect(created.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const stalledTick = service.tick();
+      await started;
+
+      now = new Date("2026-01-01T00:01:30.000Z");
+      const recreated = await service.createOrReplace(heartbeat);
+      expect(recreated.id).toBe(created.id);
+      expect(recreated.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+
+      releaseRun();
+      await stalledTick;
+
+      const afterRun = await service.inspect(created.id);
+      expect(afterRun.status).toBe("active");
+      expect(afterRun.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+      expect(afterRun.runs.map((run) => run.status)).toEqual(["succeeded"]);
+
+      now = new Date("2026-01-01T00:02:00.000Z");
+      await service.tick();
+      await service.tick();
+
+      const after = await service.inspect(created.id);
+      expect(runCount()).toBe(2);
+      expect(after.runs.map((run) => run.scheduledFor)).toEqual([
+        "2026-01-01T00:01:00.000Z",
+        "2026-01-01T00:02:00.000Z",
+      ]);
+      expect(after.nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+    });
+
+    test("deleting and re-creating a heartbeat mid-run gives the new one its own slot", async () => {
+      // delete_heartbeat followed by create_heartbeat mints a new schedule id while the
+      // old schedule's run is still in flight.
+      const { service, started, releaseRun, runCount } = createGatedService();
+      const original = await service.createOrReplace(heartbeat);
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const stalledTick = service.tick();
+      // The old run cannot be recorded once its schedule is gone, so the tick may
+      // reject; only the new schedule's slot is under test here.
+      const stalledOutcome = stalledTick.then(
+        () => undefined,
+        () => undefined,
+      );
+      await started;
+
+      now = new Date("2026-01-01T00:01:30.000Z");
+      await service.delete(original.id);
+      const replacement = await service.createOrReplace(heartbeat);
+      expect(replacement.id).not.toBe(original.id);
+      expect(replacement.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+
+      releaseRun();
+      await stalledOutcome;
+
+      expect((await service.inspect(replacement.id)).nextRunAt).toBe("2026-01-01T00:02:00.000Z");
+
+      now = new Date("2026-01-01T00:02:00.000Z");
+      await service.tick();
+      await service.tick();
+
+      const after = await service.inspect(replacement.id);
+      expect(runCount()).toBe(2);
+      expect(after.runs.map((run) => run.scheduledFor)).toEqual(["2026-01-01T00:02:00.000Z"]);
+      expect(after.nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+    });
+  }
+
   test("completeForAgent skips schedules that are already completed", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
