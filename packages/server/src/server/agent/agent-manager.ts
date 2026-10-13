@@ -61,6 +61,7 @@ import {
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
+import { foldTurnUsage, type AgentUsageTotals } from "./agent-usage-totals.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
   InMemoryAgentTimelineStore,
@@ -442,6 +443,12 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  /**
+   * Cumulative spend over completed turns, folded from `turn_completed.turnUsage`. Unlike
+   * lastUsage (a replaceable context-occupancy snapshot) this only ever grows, is persisted on
+   * the agent record, and excludes any turn still in flight.
+   */
+  usageTotals?: AgentUsageTotals;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -784,6 +791,9 @@ export class AgentManager {
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
+  // Keyed by session instance, not agent id: provider turn ids restart at every new session
+  // (daemon restart, reload), so a persisted or agent-wide set would mistake a fresh turn for a replay.
+  private readonly countedUsageTurnIds = new WeakMap<object, Set<string>>();
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
@@ -2176,6 +2186,7 @@ export class AgentManager {
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
+        usageTotals: record.usageTotals,
         lastError: record.lastError ?? undefined,
         attention,
         internal: record.internal,
@@ -3799,6 +3810,8 @@ export class AgentManager {
         now,
         options,
       });
+      // Totals live on the stored record; the snapshot persisted below must not overwrite them.
+      const storedUsageTotals = (await this.registry?.get(resolvedAgentId))?.usageTotals;
 
       const managed = this.buildManagedAgentForRegister({
         resolvedAgentId,
@@ -3807,6 +3820,7 @@ export class AgentManager {
         now,
         durableTimelineHasRows,
         options,
+        usageTotals: storedUsageTotals,
       });
 
       // Read history before publishing the agent: a provider failure must leave the
@@ -3966,8 +3980,10 @@ export class AgentManager {
           launchEnv?: Record<string, string>;
         }
       | undefined;
+    usageTotals?: AgentUsageTotals;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options, usageTotals } =
+      params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
@@ -4001,6 +4017,7 @@ export class AgentManager {
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
+      usageTotals,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
@@ -4689,6 +4706,7 @@ export class AgentManager {
           eventTurnId,
           isForegroundEvent,
           terminalDisposition,
+          fromHistory: options?.fromHistory === true,
         });
         return undefined;
       case "turn_failed":
@@ -4782,8 +4800,10 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
+    fromHistory: boolean;
   }): void {
-    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition } = params;
+    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, fromHistory } =
+      params;
     this.logger.trace(
       {
         agentId: agent.id,
@@ -4795,6 +4815,12 @@ export class AgentManager {
       },
       "agent.manager.turn.completed",
     );
+    // Spend is counted before the stale check: a terminal for a superseded turn that carries
+    // figures still reports money that was spent, and the per-session turn-id set is what
+    // rejects a true replay. A stale terminal with no figures is noise, not a counted turn.
+    if (!fromHistory && (terminalDisposition !== "stale" || event.turnUsage)) {
+      this.recordCompletedTurnUsage(agent, event, eventTurnId);
+    }
     if (terminalDisposition === "stale") return;
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
@@ -4813,6 +4839,28 @@ export class AgentManager {
       this.emitState(agent);
     }
     void this.refreshRuntimeInfo(agent);
+  }
+
+  private recordCompletedTurnUsage(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "turn_completed" }>,
+    turnId: string | undefined,
+  ): void {
+    if (turnId) {
+      let counted = this.countedUsageTurnIds.get(agent.session);
+      if (!counted) {
+        counted = new Set();
+        this.countedUsageTurnIds.set(agent.session, counted);
+      }
+      if (counted.has(turnId)) {
+        return;
+      }
+      counted.add(turnId);
+      if (counted.size > 500) {
+        counted.delete(counted.values().next().value as string);
+      }
+    }
+    agent.usageTotals = foldTurnUsage(agent.usageTotals, event.turnUsage);
   }
 
   private async onStreamTurnFailed(params: {

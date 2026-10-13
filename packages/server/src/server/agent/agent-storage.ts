@@ -9,6 +9,7 @@ import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
+import { AgentUsageTotalsSchema } from "./agent-usage-totals.js";
 
 const SERIALIZABLE_CONFIG_SCHEMA = z
   .object({
@@ -77,6 +78,7 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  usageTotals: AgentUsageTotalsSchema.optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -263,6 +265,10 @@ export class AgentStorage {
       }
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
+      // An agent object that never loaded its totals must not erase what the record holds.
+      if (record.usageTotals === undefined && existing?.usageTotals !== undefined) {
+        record.usageTotals = existing.usageTotals;
+      }
       return record;
     });
   }

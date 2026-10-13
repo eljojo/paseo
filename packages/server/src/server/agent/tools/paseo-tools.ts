@@ -33,6 +33,7 @@ import {
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
 import type { AgentStorage } from "../agent-storage.js";
+import { describeUsageBasis, summarizeUsageTotals } from "../agent-usage-totals.js";
 import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
@@ -2136,6 +2137,80 @@ function createToolCatalog(
         structuredContent: ensureValidJson({
           status: structuredSnapshot.status,
           snapshot: structuredSnapshot,
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "get_agent_usage",
+    {
+      title: "Get agent usage",
+      description:
+        "Cumulative tokens and cost for one agent over its completed turns, readable at any time including by the agent about itself mid-turn. Omit agentId to read your own. A null figure is unknown, never zero; complete=false means some counted turn did not report a figure, so that sum is a lower bound. The turn in flight is not included. See providerNotes for what the numbers mean for this provider.",
+      inputSchema: {
+        agentId: z.string().optional().describe("Agent to read. Defaults to the calling agent."),
+      },
+      outputSchema: {
+        agentId: z.string(),
+        provider: z.string(),
+        status: z.string(),
+        turnInFlight: z.boolean(),
+        coverage: z.string(),
+        turnsCounted: z.number(),
+        inputTokens: z.number().nullable(),
+        outputTokens: z.number().nullable(),
+        cacheReadTokens: z.number().nullable(),
+        cacheWriteTokens: z.number().nullable(),
+        costUsd: z.number().nullable(),
+        turnsReporting: z.object({
+          inputTokens: z.number(),
+          outputTokens: z.number(),
+          cacheReadTokens: z.number(),
+          cacheWriteTokens: z.number(),
+          costUsd: z.number(),
+        }),
+        complete: z.boolean(),
+        providerNotes: z.array(z.string()),
+      },
+    },
+    async ({ agentId: requestedAgentId }) => {
+      const agentId = requestedAgentId ?? callerAgentId;
+      if (!agentId) {
+        throw new Error("agentId is required when the caller is not an agent");
+      }
+      const live = agentManager.getAgent(agentId);
+      let provider: string;
+      let status: string;
+      let turnInFlight: boolean;
+      let usageTotals: Parameters<typeof summarizeUsageTotals>[0];
+      if (live) {
+        provider = live.provider;
+        status = live.lifecycle;
+        turnInFlight = Boolean(live.activeTurnId) || live.lifecycle === "running";
+        usageTotals = live.usageTotals;
+      } else {
+        const record = await agentStorage.get(agentId);
+        if (!record || record.internal) {
+          throw new Error(`Agent ${agentId} not found`);
+        }
+        provider = record.provider;
+        status = "closed";
+        turnInFlight = false;
+        usageTotals = record.usageTotals;
+      }
+      const summary = summarizeUsageTotals(usageTotals);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          agentId,
+          provider,
+          status,
+          turnInFlight,
+          coverage:
+            "Cumulative over completed turns only. The turn in flight is not included, and no provider reports a reliable partial figure for it.",
+          ...summary,
+          providerNotes: describeUsageBasis(provider, summary),
         }),
       };
     },
