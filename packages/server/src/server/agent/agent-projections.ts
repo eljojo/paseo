@@ -28,6 +28,8 @@ export type { ManagedAgent };
 
 interface ProjectionOptions {
   title?: string | null;
+  /** Archive state lives on the stored record, never on the live agent. */
+  archivedAt?: string | null;
   createdAt?: string;
   internal?: boolean;
 }
@@ -138,6 +140,7 @@ export function toAgentPayload(
     pendingPermissions: sanitizePendingPermissions(agent.pendingPermissions),
     persistence: projectPersistenceHandleForWire(agent.persistence),
     title: options?.title ?? null,
+    ...(options?.archivedAt !== undefined ? { archivedAt: options.archivedAt } : {}),
     labels: agent.labels,
     ...(agent.internal ? { internal: true } : {}),
   };

@@ -2180,6 +2180,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       });
       const agents = (await directory.list({ includeBackground, includeArchived }))
         .map(toAgentListItemPayload)
+        // A resident agent can be archived (its history was opened); stored records are
+        // already filtered above.
+        .filter((agent) => includeArchived || !agent.archivedAt)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))
         .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
