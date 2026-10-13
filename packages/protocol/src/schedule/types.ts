@@ -52,6 +52,10 @@ export const ScheduleRunSchema = z.object({
   workspaceId: z.string().nullable().optional(),
   output: z.string().nullable(),
   error: z.string().nullable(),
+  // Set to false on a heartbeat fire that never reached its target (the target stayed
+  // busy until the wait gave up). Such a run is recorded as failed but does not count
+  // against maxRuns. Absent on every other run.
+  delivered: z.boolean().optional(),
 });
 export type ScheduleRun = z.infer<typeof ScheduleRunSchema>;
 
@@ -69,6 +73,13 @@ export const StoredScheduleSchema = z.object({
   pausedAt: z.string().nullable(),
   expiresAt: z.string().nullable(),
   maxRuns: z.number().int().positive().nullable(),
+  // Longest a single run may take before it is failed and the schedule moves on.
+  // Absent or null means runs are not time-limited.
+  runTimeoutMs: z.number().int().positive().nullable().optional(),
+  // The agent whose tool call created or last replaced this schedule. Absent on
+  // schedules stored before this field existed; null when no agent made the call
+  // (CLI, app).
+  createdByAgentId: z.string().nullable().optional(),
   runs: z.array(ScheduleRunSchema),
 });
 export type StoredSchedule = z.infer<typeof StoredScheduleSchema>;
@@ -85,6 +96,8 @@ export interface CreateScheduleInput {
   target: ScheduleTarget;
   maxRuns?: number | null;
   expiresAt?: string | null;
+  runTimeoutMs?: number | null;
+  createdByAgentId?: string | null;
   runOnCreate?: boolean | null;
 }
 

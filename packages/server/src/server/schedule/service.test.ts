@@ -287,6 +287,14 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
   };
 }
 
+function rejectWhenAborted(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted")), {
+      once: true,
+    });
+  });
+}
+
 function buildAgentRecord(params: {
   id: string;
   cwd: string;
@@ -3362,6 +3370,88 @@ describe("ScheduleService", () => {
     expect(await service.list()).toHaveLength(1);
   });
 
+  test("records which agent created a schedule, and the latest creator on a createOrReplace upsert", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+
+    const supervisorId = "99999999-9999-4999-8999-999999999999";
+    const otherSupervisorId = "88888888-8888-4888-8888-888888888888";
+    const agentId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const target = { type: "agent" as const, agentId };
+
+    const anonymous = await service.create({
+      prompt: "no creator",
+      cadence: { type: "every", everyMs: 60_000 },
+      target,
+    });
+    expect(anonymous.createdByAgentId ?? null).toBeNull();
+
+    const first = await service.createOrReplace({
+      name: "wake",
+      prompt: "check the worker",
+      cadence: { type: "cron", expression: "*/15 * * * *" },
+      target,
+      createdByAgentId: supervisorId,
+    });
+    expect(first.createdByAgentId).toBe(supervisorId);
+
+    const second = await service.createOrReplace({
+      name: "wake",
+      prompt: "check the worker, tighter",
+      cadence: { type: "cron", expression: "*/5 * * * *" },
+      target,
+      createdByAgentId: otherSupervisorId,
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.createdByAgentId).toBe(otherSupervisorId);
+    expect((await service.inspect(first.id)).createdByAgentId).toBe(otherSupervisorId);
+  });
+
+  test("loads a stored schedule written before createdByAgentId existed", async () => {
+    const service1 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service1.create({
+      prompt: "Old schedule",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+      runOnCreate: false,
+      createdByAgentId: "99999999-9999-4999-8999-999999999999",
+    });
+    await service1.stop();
+
+    const { createdByAgentId: _omitted, ...legacy } = created;
+    expect("createdByAgentId" in legacy).toBe(false);
+    await writeFile(join(tempDir, "schedules", `${created.id}.json`), JSON.stringify(legacy));
+
+    const service2 = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const loaded = await service2.inspect(created.id);
+    expect(loaded.id).toBe(created.id);
+    expect(loaded.createdByAgentId ?? null).toBeNull();
+    await service2.stop();
+  });
+
   test("createOrReplace preserves an existing cron timezone when replacement omits timezone", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -3847,6 +3937,460 @@ describe("ScheduleService", () => {
       expect(runCount()).toBe(2);
       expect(after.runs.map((run) => run.scheduledFor)).toEqual(["2026-01-01T00:02:00.000Z"]);
       expect(after.nextRunAt).toBe("2026-01-01T00:03:00.000Z");
+    });
+  }
+
+  // A heartbeat that fires while its target is mid-turn waits for the target instead
+  // of failing, and a run that never reached the target does not count against
+  // maxRuns. Kept flat (no nested describe) for the lint's callback-nesting limit.
+  {
+    const slotAfterFirst = "2026-01-01T00:02:00.000Z";
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function createBusyHeartbeatFixture(
+      overrides: { maxRuns?: number; runTimeoutMs?: number } = {},
+    ) {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients: createTestAgentClients(),
+        registry: agentStorage,
+      });
+      const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+        workspaceId: undefined,
+      });
+      let busy = true;
+      const idleWaiters: Array<() => void> = [];
+      let signalWaitBegan!: () => void;
+      let waitBegan = new Promise<void>((resolve) => {
+        signalWaitBegan = resolve;
+      });
+      const realHasInFlightRun = manager.hasInFlightRun.bind(manager);
+      vi.spyOn(manager, "hasInFlightRun").mockImplementation(
+        (id) => (id === agent.id && busy) || realHasInFlightRun(id),
+      );
+      const realWaitForAgentEvent = manager.waitForAgentEvent.bind(manager);
+      vi.spyOn(manager, "waitForAgentEvent").mockImplementation(async (id, options) => {
+        if (options?.waitForActive) {
+          return realWaitForAgentEvent(id, options);
+        }
+        signalWaitBegan();
+        await new Promise<void>((resolve, reject) => {
+          if (!busy) {
+            resolve();
+            return;
+          }
+          idleWaiters.push(resolve);
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason ?? new Error("aborted")),
+            { once: true },
+          );
+        });
+        return { status: "idle", permission: null, lastMessage: null };
+      });
+      const steerOrReplace = vi.spyOn(manager, "steerOrReplaceActiveTurn");
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+      });
+      const heartbeat = await service.create({
+        prompt: "check the PR",
+        cadence: { type: "cron", expression: "* * * * *" },
+        target: { type: "agent", agentId: agent.id },
+        ...(overrides.maxRuns === undefined ? {} : { maxRuns: overrides.maxRuns }),
+        ...(overrides.runTimeoutMs === undefined ? {} : { runTimeoutMs: overrides.runTimeoutMs }),
+      });
+      expect(heartbeat.nextRunAt).toBe("2026-01-01T00:01:00.000Z");
+      return {
+        manager,
+        service,
+        heartbeat,
+        steerOrReplace,
+        waitBegan: () => waitBegan,
+        rearmWaitBegan: () => {
+          waitBegan = new Promise<void>((resolve) => {
+            signalWaitBegan = resolve;
+          });
+        },
+        goIdle: () => {
+          busy = false;
+          for (const resolve of idleWaiters.splice(0)) {
+            resolve();
+          }
+        },
+      };
+    }
+
+    test("a heartbeat into a busy target waits for it to go idle, then delivers", async () => {
+      const fixture = await createBusyHeartbeatFixture();
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.waitBegan();
+      expect(fixture.steerOrReplace).not.toHaveBeenCalled();
+
+      // The wait holds the schedule: a later tick must not fire the next slot's run.
+      now = new Date("2026-01-01T00:01:30.000Z");
+      await fixture.service.tick();
+      expect((await fixture.service.inspect(fixture.heartbeat.id)).runs).toHaveLength(1);
+
+      fixture.goIdle();
+      await tick;
+
+      const after = await fixture.service.inspect(fixture.heartbeat.id);
+      expect(fixture.steerOrReplace).toHaveBeenCalledTimes(1);
+      expect(after.runs).toHaveLength(1);
+      expect(after.runs[0]).toMatchObject({ status: "succeeded", error: null });
+      expect(after.runs[0].delivered).not.toBe(false);
+      expect(after.nextRunAt).toBe(slotAfterFirst);
+    });
+
+    test("a heartbeat whose target stays busy through the slot is not delivered and not counted", async () => {
+      const fixture = await createBusyHeartbeatFixture({ maxRuns: 1 });
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.waitBegan();
+
+      // The wait gives up when the next slot comes due.
+      now = new Date(slotAfterFirst);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await tick;
+
+      const afterGiveUp = await fixture.service.inspect(fixture.heartbeat.id);
+      expect(fixture.steerOrReplace).not.toHaveBeenCalled();
+      expect(afterGiveUp.runs).toHaveLength(1);
+      expect(afterGiveUp.runs[0]).toMatchObject({
+        status: "failed",
+        delivered: false,
+        error: expect.stringContaining("busy"),
+      });
+      // maxRuns: 1 is not spent, and the slot the wait gave up at is still due.
+      expect(afterGiveUp.status).toBe("active");
+      expect(afterGiveUp.nextRunAt).toBe(slotAfterFirst);
+
+      fixture.rearmWaitBegan();
+      fixture.goIdle();
+      await fixture.service.tick();
+
+      const after = await fixture.service.inspect(fixture.heartbeat.id);
+      expect(fixture.steerOrReplace).toHaveBeenCalledTimes(1);
+      expect(after.runs.map((run) => run.status)).toEqual(["failed", "succeeded"]);
+      expect(after.runs.map((run) => run.scheduledFor)).toEqual([
+        "2026-01-01T00:01:00.000Z",
+        slotAfterFirst,
+      ]);
+      expect(after.status).toBe("completed");
+    });
+
+    test("maxRuns: 1 on a heartbeat completes only after the delivery that follows a busy wait", async () => {
+      const fixture = await createBusyHeartbeatFixture({ maxRuns: 1 });
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.waitBegan();
+      expect((await fixture.service.inspect(fixture.heartbeat.id)).status).toBe("active");
+
+      fixture.goIdle();
+      await tick;
+
+      const after = await fixture.service.inspect(fixture.heartbeat.id);
+      expect(fixture.steerOrReplace).toHaveBeenCalledTimes(1);
+      expect(after.runs.map((run) => run.status)).toEqual(["succeeded"]);
+      expect(after.status).toBe("completed");
+    });
+
+    test("a heartbeat's wait for a busy target is also bounded by the run timeout", async () => {
+      const fixture = await createBusyHeartbeatFixture({ maxRuns: 1, runTimeoutMs: 10_000 });
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.waitBegan();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await tick;
+
+      const after = await fixture.service.inspect(fixture.heartbeat.id);
+      expect(after.runs).toHaveLength(1);
+      expect(after.runs[0]).toMatchObject({ status: "failed", delivered: false });
+      expect(after.status).toBe("active");
+    });
+  }
+
+  // Per-schedule run timeout: a run that blocks is failed and released so the
+  // schedule keeps firing.
+  {
+    const gatedAgentId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const timeoutHeartbeat = {
+      name: "timeout heartbeat",
+      prompt: "hang",
+      cadence: { type: "cron", expression: "* * * * *" },
+      target: { type: "agent", agentId: gatedAgentId },
+      runTimeoutMs: 30_000,
+    } as const;
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function createTimeoutService() {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const gates: Array<(value: ScheduleExecutionResult) => void> = [];
+      let runCount = 0;
+      let signalStarted!: () => void;
+      let started = new Promise<void>((resolve) => {
+        signalStarted = resolve;
+      });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: new AgentManager({ logger: createTestLogger() }),
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+        runner: (_schedule, _runId) => {
+          runCount += 1;
+          if (runCount === 1) {
+            signalStarted();
+            return new Promise<ScheduleExecutionResult>((resolve) => {
+              gates.push(resolve);
+            });
+          }
+          return Promise.resolve({ agentId: null, output: "ok" });
+        },
+      });
+      return {
+        service,
+        started: () => started,
+        resolveFirst: (result: ScheduleExecutionResult) => gates[0](result),
+        runCount: () => runCount,
+        rearmStarted: () => {
+          started = new Promise<void>((resolve) => {
+            signalStarted = resolve;
+          });
+        },
+      };
+    }
+
+    test("createOrReplace stores the run timeout and replaces it on re-creation", async () => {
+      const { service } = createTimeoutService();
+
+      const created = await service.createOrReplace(timeoutHeartbeat);
+      expect(created.runTimeoutMs).toBe(30_000);
+
+      const replaced = await service.createOrReplace({ ...timeoutHeartbeat, runTimeoutMs: 5_000 });
+      expect(replaced.id).toBe(created.id);
+      expect(replaced.runTimeoutMs).toBe(5_000);
+
+      const cleared = await service.createOrReplace({ ...timeoutHeartbeat, runTimeoutMs: null });
+      expect(cleared.runTimeoutMs).toBeNull();
+    });
+
+    test("a run that never finishes is failed at its timeout and the next slot fires", async () => {
+      const fixture = createTimeoutService();
+      const created = await fixture.service.create(timeoutHeartbeat);
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.started();
+
+      now = new Date("2026-01-01T00:01:30.000Z");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await tick;
+
+      const afterTimeout = await fixture.service.inspect(created.id);
+      expect(afterTimeout.runs).toHaveLength(1);
+      expect(afterTimeout.runs[0]).toMatchObject({
+        status: "failed",
+        error: "Run timed out after 30s",
+      });
+      expect(afterTimeout.runs[0].delivered).not.toBe(false);
+      expect(afterTimeout.status).toBe("active");
+
+      now = new Date("2026-01-01T00:02:00.000Z");
+      await fixture.service.tick();
+
+      const after = await fixture.service.inspect(created.id);
+      expect(fixture.runCount()).toBe(2);
+      expect(after.runs.map((run) => run.status)).toEqual(["failed", "succeeded"]);
+    });
+
+    test("a run that finishes before its timeout is unaffected", async () => {
+      const fixture = createTimeoutService();
+      const created = await fixture.service.create(timeoutHeartbeat);
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.started();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      fixture.resolveFirst({ agentId: null, output: "done in time" });
+      await tick;
+      // The timeout timer is cleared, so passing its deadline later changes nothing.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const after = await fixture.service.inspect(created.id);
+      expect(after.runs).toHaveLength(1);
+      expect(after.runs[0]).toMatchObject({
+        status: "succeeded",
+        output: "done in time",
+        error: null,
+      });
+    });
+
+    test("a run that resolves after its timeout does not overwrite the recorded failure", async () => {
+      const fixture = createTimeoutService();
+      const created = await fixture.service.create(timeoutHeartbeat);
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = fixture.service.tick();
+      await fixture.started();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await tick;
+      const recorded = await fixture.service.inspect(created.id);
+
+      fixture.resolveFirst({ agentId: null, output: "too late" });
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      const after = await fixture.service.inspect(created.id);
+      expect(after.runs).toEqual(recorded.runs);
+      expect(after.lastRunAt).toBe(recorded.lastRunAt);
+    });
+
+    test("a timeout cancels the current turn of a new-agent run", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients: createTestAgentClients(),
+        registry: agentStorage,
+      });
+      const agentId = "00000000-0000-0000-0000-000000000777";
+      let signalTurnStarted!: () => void;
+      const turnStarted = new Promise<void>((resolve) => {
+        signalTurnStarted = resolve;
+      });
+      manager.runAgent = () => {
+        signalTurnStarted();
+        return new Promise(() => {});
+      };
+      manager.archiveAgent = async () => {};
+      const cancelAgentRun = vi
+        .spyOn(manager, "cancelAgentRun")
+        .mockResolvedValue({ status: "settled" });
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        createAgent: async (input) => {
+          const snapshot = {
+            id: agentId,
+            provider: "claude",
+            cwd: input.cwd ?? tempDir,
+            workspaceId: input.workspaceId,
+            status: "idle",
+            lifecycle: "idle",
+          };
+          return {
+            snapshot: snapshot as Awaited<
+              ReturnType<ScheduleServiceOptions["createAgent"]>
+            >["snapshot"],
+            liveSnapshot: snapshot as Awaited<
+              ReturnType<ScheduleServiceOptions["createAgent"]>
+            >["liveSnapshot"],
+            background: true,
+            initialPromptStarted: false,
+            initialPromptError: null,
+          };
+        },
+        now: () => now,
+      });
+      const created = await service.create({
+        prompt: "stuck on a prompt",
+        cadence: { type: "cron", expression: "* * * * *" },
+        target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+        runTimeoutMs: 20_000,
+      });
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = service.tick();
+      await turnStarted;
+      await vi.advanceTimersByTimeAsync(20_000);
+      await tick;
+
+      expect(cancelAgentRun).toHaveBeenCalledWith(agentId);
+      const after = await service.inspect(created.id);
+      expect(after.runs[0]).toMatchObject({
+        status: "failed",
+        error: "Run timed out after 20s",
+      });
+    });
+
+    test("a timeout abandons the wait on an agent target without interrupting its turn", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const manager = new AgentManager({
+        logger: createTestLogger(),
+        clients: createTestAgentClients(),
+        registry: agentStorage,
+      });
+      const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+        workspaceId: undefined,
+      });
+      let signalWaiting!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        signalWaiting = resolve;
+      });
+      const waitSpy = vi
+        .spyOn(manager, "waitForAgentEvent")
+        .mockImplementation(async (_id, options) => {
+          signalWaiting();
+          await rejectWhenAborted(options?.signal);
+          throw new Error("unreachable");
+        });
+      const cancelAgentRun = vi.spyOn(manager, "cancelAgentRun");
+      const service = createScheduleService({
+        paseoHome: tempDir,
+        logger: createTestLogger(),
+        agentManager: manager,
+        agentStorage,
+        providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+        now: () => now,
+      });
+      const created = await service.create({
+        prompt: "wait forever",
+        cadence: { type: "cron", expression: "* * * * *" },
+        target: { type: "agent", agentId: agent.id },
+        runTimeoutMs: 20_000,
+      });
+
+      now = new Date("2026-01-01T00:01:00.000Z");
+      const tick = service.tick();
+      await waiting;
+      await vi.advanceTimersByTimeAsync(20_000);
+      await tick;
+
+      expect(cancelAgentRun).not.toHaveBeenCalled();
+      const after = await service.inspect(created.id);
+      expect(after.runs[0]).toMatchObject({
+        status: "failed",
+        error: "Run timed out after 20s",
+      });
+      expect(after.runs[0].delivered).not.toBe(false);
+
+      // The delivered turn is still running in the background; let it finish so its
+      // snapshot writes do not race the temp dir cleanup.
+      waitSpy.mockRestore();
+      await manager.waitForAgentEvent(agent.id, { waitForActive: true });
     });
   }
 
