@@ -502,6 +502,35 @@ function createStoredRecord(overrides: Partial<StoredAgentRecord> = {}): StoredA
   };
 }
 
+const ARCHIVED_AT = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+function createResidentArchivedAgentDeps() {
+  const deps = createTestDeps();
+  const archivedRecord = createStoredRecord({
+    id: "archived-resident",
+    cwd: "/tmp/workspace",
+    updatedAt: ARCHIVED_AT,
+    lastActivityAt: ARCHIVED_AT,
+    lastStatus: "idle",
+    archivedAt: ARCHIVED_AT,
+  });
+  const residentAgent = createManagedAgent({
+    id: "archived-resident",
+    cwd: "/tmp/workspace",
+    lifecycle: "idle",
+    updatedAt: new Date(ARCHIVED_AT),
+  });
+  deps.spies.agentManager.getAgent.mockImplementation((agentId: string) =>
+    agentId === residentAgent.id ? residentAgent : null,
+  );
+  deps.spies.agentManager.listAgents.mockReturnValue([residentAgent]);
+  deps.spies.agentStorage.get.mockImplementation(async (agentId: string) =>
+    agentId === archivedRecord.id ? archivedRecord : null,
+  );
+  deps.spies.agentStorage.list.mockResolvedValue([archivedRecord]);
+  return deps;
+}
+
 function createManagedAgent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
   const now = new Date();
   return {
@@ -6391,6 +6420,60 @@ describe("agent snapshot MCP serialization", () => {
     const agentIds = agentsOf(response).map((agent) => agent.id);
     expect(agentIds).toHaveLength(3);
     expect(new Set(agentIds)).toEqual(new Set(["in-cwd", "in-child-cwd", "stored-in-cwd"]));
+  });
+
+  // An archived agent whose history was opened stays resident in the manager (idle, with the
+  // updatedAt of its archiving). The live snapshot carries no archivedAt, so MCP read it as an
+  // active agent: list_agents listed it and get_agent_status reported archivedAt null.
+  it("keeps a resident archived agent out of the default list_agents result", async () => {
+    const { agentManager, agentStorage } = createResidentArchivedAgentDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "list_agents");
+
+    const response = await tool.handler({ cwd: "/tmp/workspace" });
+
+    expect(agentsOf(response).map((agent) => agent.id)).toEqual([]);
+  });
+
+  it("reports a resident archived agent's archivedAt from list_agents when archived agents are included", async () => {
+    const { agentManager, agentStorage } = createResidentArchivedAgentDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "list_agents");
+
+    const response = await tool.handler({
+      cwd: "/tmp/workspace",
+      includeArchived: true,
+    });
+
+    expect(
+      agentsOf(response).map((agent) => ({ id: agent.id, archivedAt: agent.archivedAt })),
+    ).toEqual([{ id: "archived-resident", archivedAt: ARCHIVED_AT }]);
+  });
+
+  it("reports a resident archived agent's archivedAt from get_agent_status", async () => {
+    const { agentManager, agentStorage } = createResidentArchivedAgentDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+    });
+    const tool = registeredTool(server, "get_agent_status");
+
+    const response = await tool.handler({ agentId: "archived-resident" });
+    const snapshot = z.record(z.string(), z.unknown()).parse(response.structuredContent.snapshot);
+
+    expect(snapshot.archivedAt).toBe(ARCHIVED_AT);
   });
 
   it("allows explicit cwd, status, archive, time, and limit filters for list_agents", async () => {

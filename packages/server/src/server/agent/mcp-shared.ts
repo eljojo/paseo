@@ -207,12 +207,23 @@ export async function resolveAgentTitle(
   agentId: string,
   logger: Logger,
 ): Promise<string | null> {
+  return (await resolveStoredAgentMetadata(agentStorage, agentId, logger)).title;
+}
+
+// A live agent can be archived: opening an archived agent's history keeps it resident, idle, with
+// the updatedAt of its archiving. Archive state lives only on the stored record, so a snapshot
+// serialized without it reads as an active agent.
+async function resolveStoredAgentMetadata(
+  agentStorage: AgentStorage,
+  agentId: string,
+  logger: Logger,
+): Promise<{ title: string | null; archivedAt: string | null }> {
   try {
     const record = await agentStorage.get(agentId);
-    return record?.title ?? null;
+    return { title: record?.title ?? null, archivedAt: record?.archivedAt ?? null };
   } catch (error) {
     logger.error({ err: error, agentId }, "Failed to load agent title");
-    return null;
+    return { title: null, archivedAt: null };
   }
 }
 
@@ -221,8 +232,8 @@ export async function serializeSnapshotWithMetadata(
   snapshot: ManagedAgent,
   logger: Logger,
 ) {
-  const title = await resolveAgentTitle(agentStorage, snapshot.id, logger);
-  return serializeAgentSnapshot(snapshot, { title });
+  const { title, archivedAt } = await resolveStoredAgentMetadata(agentStorage, snapshot.id, logger);
+  return serializeAgentSnapshot(snapshot, { title, archivedAt });
 }
 
 export function parseDurationString(input: string): number {
