@@ -2633,7 +2633,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     "create_heartbeat",
     {
       title: "Create heartbeat",
-      description: "Create a recurring heartbeat that sends you a prompt on a cron cadence.",
+      description:
+        "Create a recurring heartbeat that sends you a prompt on a cron cadence. Reusing the name of an existing heartbeat of yours replaces that heartbeat in place and returns the same id — do not delete the old id afterwards, it is the new heartbeat.",
       inputSchema: {
         prompt: z.string().trim().min(1, "prompt is required"),
         cron: z.string().trim().min(1, "cron is required"),
@@ -2729,7 +2730,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "List heartbeats",
       description:
-        "List the recurring prompts the daemon delivers into existing agents, including the ones this session armed on itself. Use the id with inspect_schedule for run history, or delete_heartbeat to stop one.",
+        "List the recurring prompts the daemon delivers into existing agents, including the ones this session armed on itself. Use the id with heartbeat_logs for run history (or inspect_heartbeat for the full record), or delete_heartbeat to stop one.",
       inputSchema: {
         agentId: z
           .string()
