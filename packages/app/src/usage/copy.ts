@@ -10,12 +10,15 @@ export const usageCopy = {
     const remedy = problem.refreshedBy
       ? t("providerUsage.runToRefresh", { command: problem.refreshedBy })
       : t("providerUsage.signInAgain");
+    const refresher = problem.refreshedBy ?? t("providerUsage.theAgent");
     if (problem.kind === "rejected")
-      return t("providerUsage.loginRejected", { status: problem.status, remedy });
-    return t("providerUsage.loginExpired", {
-      relativeTime: formatAgo(problem.expiresAt, now.getTime(), t),
-      remedy,
-    });
+      return problem.refreshable
+        ? t("providerUsage.tokenRefusedRefreshable", { status: problem.status, refresher })
+        : t("providerUsage.loginRejected", { status: problem.status, remedy });
+    const relativeTime = formatAgo(problem.expiresAt, now.getTime(), t);
+    return problem.refreshable
+      ? t("providerUsage.tokenExpiredRefreshable", { relativeTime, refresher })
+      : t("providerUsage.loginExpired", { relativeTime, remedy });
   },
   get clientUnavailable() {
     return i18n.t("providerUsage.clientUnavailable");

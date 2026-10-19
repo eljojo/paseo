@@ -38,9 +38,11 @@ export interface UsageDetail {
   tone?: UsageWindow["tone"];
 }
 
+// `refreshable`: the login still holds a refresh token, so only its short-lived access
+// token is stale and the harness renews it on its next start. Not a dead login.
 export type UsageProblem =
-  | { kind: "expired"; expiresAt: string; refreshedBy?: string }
-  | { kind: "rejected"; status: number; refreshedBy?: string }
+  | { kind: "expired"; expiresAt: string; refreshedBy?: string; refreshable?: boolean }
+  | { kind: "rejected"; status: number; refreshedBy?: string; refreshable?: boolean }
   | { kind: "no_quota"; detail: string };
 
 export type UsageReport =

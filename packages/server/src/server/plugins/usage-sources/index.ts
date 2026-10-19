@@ -370,13 +370,19 @@ function legacyProblem(problem: UsageProblem, now: number): string {
   const remedy = problem.refreshedBy
     ? `Run ${problem.refreshedBy} to refresh it.`
     : "Sign in again.";
-  if (problem.kind === "rejected") return `Login rejected (HTTP ${problem.status}). ${remedy}`;
+  const renews = `${problem.refreshedBy ?? "the agent"} refreshes it on its next start`;
+  if (problem.kind === "rejected")
+    return problem.refreshable
+      ? `Access token refused (HTTP ${problem.status}); ${renews}. Sign in again only if that fails.`
+      : `Login rejected (HTTP ${problem.status}). ${remedy}`;
   const elapsed = Math.max(0, now - Date.parse(problem.expiresAt));
   let ago = "just now";
   if (elapsed >= 86_400_000) ago = `${Math.floor(elapsed / 86_400_000)}d ago`;
   else if (elapsed >= 3_600_000) ago = `${Math.floor(elapsed / 3_600_000)}h ago`;
   else if (elapsed >= 60_000) ago = `${Math.floor(elapsed / 60_000)}m ago`;
-  return `Login expired ${ago}. ${remedy}`;
+  return problem.refreshable
+    ? `Access token expired ${ago}; ${renews}, so the login still works.`
+    : `Login expired ${ago}. ${remedy}`;
 }
 
 // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.

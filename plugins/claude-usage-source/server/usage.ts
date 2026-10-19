@@ -566,6 +566,7 @@ export async function fetchUsage(
       kind: "expired",
       expiresAt: new Date(credentials.expires).toISOString(),
       refreshedBy,
+      ...(credentials.oauth.refreshToken ? { refreshable: true } : {}),
     });
   const profile = await cachedProfile(
     credentials.oauth.accessToken,
