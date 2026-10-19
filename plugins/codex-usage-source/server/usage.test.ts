@@ -270,6 +270,19 @@ test.each([401, 403])("reports a Codex login rejected with HTTP %i", async (stat
   ).toEqual({ status: "unavailable", problem: { kind: "rejected", status, refreshedBy: "codex" } });
 });
 
+test("marks a rejected Codex access token refreshable while auth.json holds a refresh token", async () => {
+  await writeFile(
+    join(fixtureHome, "auth.json"),
+    JSON.stringify({ tokens: { access_token: "fixture-stale", refresh_token: "fixture-refresh" } }),
+  );
+  expect(
+    await fetchUsage(authInput(fixtureHome), async () => new Response(null, { status: 401 })),
+  ).toEqual({
+    status: "unavailable",
+    problem: { kind: "rejected", status: 401, refreshedBy: "codex", refreshable: true },
+  });
+});
+
 // Issue #4165: the primary slot contains the only weekly window.
 test("names a seven-day-only primary window from its reported duration", async () => {
   const report = await fetchUsage(authInput(fixtureHome), async () =>

@@ -6298,11 +6298,13 @@ export const UsageProblemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("expired"),
     expiresAt: z.iso.datetime(),
     refreshedBy: z.string().optional(),
+    refreshable: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal("rejected"),
     status: z.number().int(),
     refreshedBy: z.string().optional(),
+    refreshable: z.boolean().optional(),
   }),
   z.object({ kind: z.literal("no_quota"), detail: z.string() }),
 ]);

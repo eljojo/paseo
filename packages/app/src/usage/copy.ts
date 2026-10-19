@@ -9,9 +9,15 @@ export const usageCopy = {
     const remedy = problem.refreshedBy
       ? `Run ${problem.refreshedBy} to refresh it.`
       : "Sign in again.";
-    if (problem.kind === "rejected") return `Login rejected (HTTP ${problem.status}). ${remedy}`;
+    const renews = `${problem.refreshedBy ?? "the agent"} refreshes it on its next start`;
+    if (problem.kind === "rejected")
+      return problem.refreshable
+        ? `Access token refused (HTTP ${problem.status}); ${renews}. Sign in again only if that fails.`
+        : `Login rejected (HTTP ${problem.status}). ${remedy}`;
     const ago = formatCompactTimeAgoAsProse(formatCompactTimeAgo(new Date(problem.expiresAt), now));
-    return `Login expired ${ago}. ${remedy}`;
+    return problem.refreshable
+      ? `Access token expired ${ago}; ${renews}, so the login still works.`
+      : `Login expired ${ago}. ${remedy}`;
   },
   title: "Usage",
   planUsage: "Plan usage",
