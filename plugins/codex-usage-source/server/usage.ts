@@ -21,6 +21,7 @@ const authSchema = z.object({
       access_token: z.string().optional(),
       account_id: z.string().optional(),
       id_token: z.string().optional(),
+      refresh_token: z.string().optional(),
     })
     .optional(),
 });
@@ -56,6 +57,7 @@ interface Auth {
   accountId?: string;
   idToken?: string;
   expires?: number;
+  refreshable?: boolean;
 }
 
 export async function discover(
@@ -147,6 +149,7 @@ export async function readAuth(
     token: auth.data.tokens.access_token,
     accountId: auth.data.tokens.account_id,
     idToken: auth.data.tokens.id_token,
+    refreshable: Boolean(auth.data.tokens.refresh_token),
   };
 }
 
@@ -209,7 +212,14 @@ export async function fetchUsage(
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status === 401 || response.status === 403)
-    return unavailable({ kind: "rejected", status: response.status, refreshedBy });
+    // Codex's own auth.json carries no expiry, so a stale access token is only found
+    // out here; with a refresh token on file the CLI renews it on its next start.
+    return unavailable({
+      kind: "rejected",
+      status: response.status,
+      refreshedBy,
+      ...(auth.refreshable ? { refreshable: true } : {}),
+    });
   if (!response.ok) throw new Error(`Codex usage API returned ${response.status}`);
   const text = await response.text();
   if (text.trim().startsWith("<")) throw new Error("Codex usage API returned HTML");

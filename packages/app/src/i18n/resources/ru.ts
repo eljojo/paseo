@@ -2140,6 +2140,11 @@ export const ru: TranslationResources = {
     signInAgain: "Войдите снова.",
     loginRejected: "Вход отклонён (HTTP {{status}}). {{remedy}}",
     loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "Токен доступа истёк {{relativeTime}}; {{refresher}} обновит его при следующем запуске, поэтому вход остаётся действительным.",
+    tokenRefusedRefreshable:
+      "Токен доступа отклонён (HTTP {{status}}); {{refresher}} обновит его при следующем запуске. Войдите снова, только если это не поможет.",
+    theAgent: "агент",
     title: "Использование плана",
     refresh: "Обновить",
     refreshAll: "Обновить всё",

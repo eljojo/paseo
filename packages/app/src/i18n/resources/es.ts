@@ -2155,6 +2155,11 @@ export const es: TranslationResources = {
     signInAgain: "Vuelve a iniciar sesión.",
     loginRejected: "Inicio de sesión rechazado (HTTP {{status}}). {{remedy}}",
     loginExpired: "La sesión caducó {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "El token de acceso caducó {{relativeTime}}; {{refresher}} lo renueva en su próximo inicio, así que la sesión sigue siendo válida.",
+    tokenRefusedRefreshable:
+      "Token de acceso rechazado (HTTP {{status}}); {{refresher}} lo renueva en su próximo inicio. Vuelve a iniciar sesión solo si eso falla.",
+    theAgent: "el agente",
     title: "Uso del plan",
     refresh: "Actualizar",
     refreshAll: "Actualizar todo",

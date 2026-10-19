@@ -2107,6 +2107,11 @@ export const ar: TranslationResources = {
     signInAgain: "سجّل الدخول مجددًا.",
     loginRejected: "تم رفض تسجيل الدخول (HTTP {{status}}). {{remedy}}",
     loginExpired: "انتهت صلاحية تسجيل الدخول {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "انتهت صلاحية رمز الوصول {{relativeTime}}؛ سيجدده {{refresher}} عند تشغيله التالي، لذا لا يزال تسجيل الدخول صالحًا.",
+    tokenRefusedRefreshable:
+      "تم رفض رمز الوصول (HTTP {{status}})؛ سيجدده {{refresher}} عند تشغيله التالي. سجّل الدخول مجددًا فقط إذا فشل ذلك.",
+    theAgent: "الوكيل",
     title: "استخدام الخطة",
     refresh: "تحديث",
     refreshAll: "تحديث الكل",

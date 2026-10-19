@@ -2155,6 +2155,11 @@ export const fr: TranslationResources = {
     signInAgain: "Reconnectez-vous.",
     loginRejected: "Connexion refusée (HTTP {{status}}). {{remedy}}",
     loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "Le jeton d’accès a expiré {{relativeTime}} ; {{refresher}} le renouvelle à son prochain démarrage, donc la connexion reste valide.",
+    tokenRefusedRefreshable:
+      "Jeton d’accès refusé (HTTP {{status}}) ; {{refresher}} le renouvelle à son prochain démarrage. Reconnectez-vous uniquement si cela échoue.",
+    theAgent: "l’agent",
     title: "Utilisation du forfait",
     refresh: "Actualiser",
     refreshAll: "Tout actualiser",

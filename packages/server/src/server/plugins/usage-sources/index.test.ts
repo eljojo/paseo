@@ -154,6 +154,36 @@ test("legacy listing uses oldest fetchedAt", async () => {
   expect((await registry.listLegacyUsage()).fetchedAt).toBe(new Date(1000).toISOString());
 });
 
+test("legacy listing says a refreshable login still works", async () => {
+  const registry = new UsageSourceRegistry(() => Date.parse("2026-10-16T01:27:00Z"));
+  const problems = {
+    claude: {
+      kind: "expired",
+      expiresAt: "2026-10-16T01:02:00Z",
+      refreshedBy: "claude",
+      refreshable: true,
+    },
+    codex: { kind: "rejected", status: 401, refreshedBy: "codex", refreshable: true },
+  };
+  for (const [id, problem] of Object.entries(problems))
+    registry.register(
+      source({
+        id,
+        discover: async () => [{ key: id, input: { id } }],
+        fetch: async () => ({ status: "unavailable", problem }),
+      }),
+    );
+  const { providers } = await registry.listLegacyUsage();
+  expect(
+    Object.fromEntries(providers.map((provider) => [provider.providerId, provider.error])),
+  ).toEqual({
+    claude:
+      "Access token expired 25m ago; claude refreshes it on its next start, so the login still works.",
+    codex:
+      "Access token refused (HTTP 401); codex refreshes it on its next start. Sign in again only if that fails.",
+  });
+});
+
 test("concurrent requests for the same ID share one vendor fetch", async () => {
   let finish!: (report: unknown) => void;
   const response = new Promise<unknown>((resolve) => {

@@ -2085,6 +2085,11 @@ export const zhCN: TranslationResources = {
     signInAgain: "请重新登录。",
     loginRejected: "登录被拒绝（HTTP {{status}}）。{{remedy}}",
     loginExpired: "登录已于{{relativeTime}}过期。{{remedy}}",
+    tokenExpiredRefreshable:
+      "访问令牌已于{{relativeTime}}过期；{{refresher}}会在下次启动时刷新，因此登录仍然有效。",
+    tokenRefusedRefreshable:
+      "访问令牌被拒绝（HTTP {{status}}）；{{refresher}}会在下次启动时刷新。仅当刷新失败时才需要重新登录。",
+    theAgent: "Agent",
     title: "套餐用量",
     refresh: "刷新",
     refreshAll: "全部刷新",

@@ -2128,6 +2128,11 @@ export const ja: TranslationResources = {
     signInAgain: "再度サインインしてください。",
     loginRejected: "ログインが拒否されました (HTTP {{status}})。{{remedy}}",
     loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
+    tokenExpiredRefreshable:
+      "アクセストークンは{{relativeTime}}に期限切れになりました。{{refresher}}が次回の起動時に更新するため、ログインは引き続き有効です。",
+    tokenRefusedRefreshable:
+      "アクセストークンが拒否されました (HTTP {{status}})。{{refresher}}が次回の起動時に更新します。それでも失敗する場合のみ再度サインインしてください。",
+    theAgent: "エージェント",
     title: "プラン使用量",
     refresh: "更新",
     refreshAll: "すべて更新",

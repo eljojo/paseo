@@ -2132,6 +2132,11 @@ export const en = {
     signInAgain: "Sign in again.",
     loginRejected: "Login rejected (HTTP {{status}}). {{remedy}}",
     loginExpired: "Login expired {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "Access token expired {{relativeTime}}; {{refresher}} refreshes it on its next start, so the login still works.",
+    tokenRefusedRefreshable:
+      "Access token refused (HTTP {{status}}); {{refresher}} refreshes it on its next start. Sign in again only if that fails.",
+    theAgent: "the agent",
     title: "Plan usage",
     refresh: "Refresh",
     refreshAll: "Refresh all",

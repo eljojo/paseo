@@ -942,6 +942,35 @@ async function accountFor(
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
+it("marks an expired access token refreshable while the login holds a refresh token", async () => {
+  const lookup = tokenLookup("stale-access");
+  writeFileSync(
+    join(lookup.claudeHome, ".credentials.json"),
+    JSON.stringify({
+      claudeAiOauth: { accessToken: "stale-access", refreshToken: "rt_live", expiresAt: 0 },
+    }),
+  );
+  let calls = 0;
+  const report = await fetchUsage(
+    credentialInput(lookup.claudeHome),
+    async () => {
+      calls++;
+      throw new Error("must not call network");
+    },
+    { ...lookup, now: () => 60_000 },
+  );
+  expect(report).toEqual({
+    status: "unavailable",
+    problem: {
+      kind: "expired",
+      expiresAt: "1970-01-01T00:00:00.000Z",
+      refreshedBy: "claude",
+      refreshable: true,
+    },
+  });
+  expect(calls).toBe(0);
+});
+
 it.each([401, 403])("fetch reports rejected usage HTTP %i", async (status) => {
   const lookup = tokenLookup(`usage-rejection-${status}`);
   expect(

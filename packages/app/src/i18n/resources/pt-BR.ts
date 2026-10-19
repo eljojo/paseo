@@ -2140,6 +2140,11 @@ export const ptBR: TranslationResources = {
     signInAgain: "Entre novamente.",
     loginRejected: "Login rejeitado (HTTP {{status}}). {{remedy}}",
     loginExpired: "O login expirou {{relativeTime}}. {{remedy}}",
+    tokenExpiredRefreshable:
+      "O token de acesso expirou {{relativeTime}}; {{refresher}} o renova na próxima inicialização, então o login continua válido.",
+    tokenRefusedRefreshable:
+      "Token de acesso recusado (HTTP {{status}}); {{refresher}} o renova na próxima inicialização. Entre novamente só se isso falhar.",
+    theAgent: "o agente",
     title: "Uso do plano",
     refresh: "Atualizar",
     refreshAll: "Atualizar tudo",

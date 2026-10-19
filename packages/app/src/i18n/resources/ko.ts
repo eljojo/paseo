@@ -2117,6 +2117,11 @@ export const ko: TranslationResources = {
     signInAgain: "다시 로그인하세요.",
     loginRejected: "로그인이 거부되었습니다 (HTTP {{status}}). {{remedy}}",
     loginExpired: "로그인이 {{relativeTime}}에 만료되었습니다. {{remedy}}",
+    tokenExpiredRefreshable:
+      "액세스 토큰이 {{relativeTime}}에 만료되었습니다. 다음 시작 시 {{refresher}}이(가) 갱신하므로 로그인은 여전히 유효합니다.",
+    tokenRefusedRefreshable:
+      "액세스 토큰이 거부되었습니다 (HTTP {{status}}). 다음 시작 시 {{refresher}}이(가) 갱신합니다. 그래도 실패하면 다시 로그인하세요.",
+    theAgent: "에이전트",
     title: "플랜 사용량",
     refresh: "새로 고침",
     refreshAll: "모두 새로 고침",
