@@ -392,6 +392,11 @@ export const PASEO_TOOL_CATALOG = {
     detail: { inputOrder: ["provider"] },
   },
   list_profiles: { label: "List profiles", completedLabel: "Listed profiles" },
+  list_provider_usage: {
+    label: "List plan usage",
+    completedLabel: "Listed plan usage",
+    detail: { inputOrder: ["forceRefresh"] },
+  },
   inspect_provider: {
     label: "Inspect provider",
     completedLabel: "Inspected provider",
