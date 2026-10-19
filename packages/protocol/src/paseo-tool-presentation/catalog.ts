@@ -333,6 +333,10 @@ export const PASEO_TOOL_CATALOG = {
     detail: { inputOrder: ["provider"] },
   },
   list_profiles: { label: "List profiles" },
+  list_provider_usage: {
+    label: "List plan usage",
+    detail: { inputOrder: ["forceRefresh"] },
+  },
   inspect_provider: {
     label: "Inspect provider",
     context: field("provider"),
