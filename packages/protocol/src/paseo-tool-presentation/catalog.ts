@@ -170,6 +170,7 @@ export const PASEO_TOOL_CATALOG = {
   },
   get_agent_usage: {
     label: "Read agent usage",
+    completedLabel: "Read agent usage",
     context: targetAgent(),
     detail: { inputOrder: ["agentId"] },
   },
@@ -365,14 +366,20 @@ export const PASEO_TOOL_CATALOG = {
     context: field("id"),
     detail: { inputOrder: ["id"] },
   },
-  list_heartbeats: { label: "List heartbeats", detail: { inputOrder: ["agentId"] } },
+  list_heartbeats: {
+    label: "List heartbeats",
+    completedLabel: "Listed heartbeats",
+    detail: { inputOrder: ["agentId"] },
+  },
   inspect_heartbeat: {
     label: "Inspect heartbeat",
+    completedLabel: "Inspected heartbeat",
     context: field("id"),
     detail: { inputOrder: ["id"] },
   },
   heartbeat_logs: {
     label: "Read heartbeat logs",
+    completedLabel: "Read heartbeat logs",
     context: field("id"),
     detail: { inputOrder: ["id"] },
   },
