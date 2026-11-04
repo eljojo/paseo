@@ -94,23 +94,37 @@ export class AgentDirectory {
     }
   }
 
-  async list(filter?: {
-    workspaceIds?: Iterable<string>;
-    /** Include parent chains by ID for workspace root classification. */
-    includeAncestors?: boolean;
-    labels?: Record<string, string>;
-    includeArchived?: boolean;
-    includeBackground?: BackgroundVisibility;
-    includeUnavailablePersisted?: boolean;
-  }): Promise<AgentSnapshotPayload[]> {
+  async list(filter?: AgentDirectoryFilter): Promise<AgentSnapshotPayload[]> {
+    return (await this.select(filter, false)).agents;
+  }
+
+  // The same selection as list(), plus how many agents the background and archive
+  // filters dropped, so a caller can say what its answer left out.
+  async listWithExclusions(filter?: AgentDirectoryFilter): Promise<{
+    agents: AgentSnapshotPayload[];
+    excluded: { background: number; archived: number };
+  }> {
+    return this.select(filter, true);
+  }
+
+  private async select(
+    filter: AgentDirectoryFilter | undefined,
+    countExcluded: boolean,
+  ): Promise<{
+    agents: AgentSnapshotPayload[];
+    excluded: { background: number; archived: number };
+  }> {
+    const excluded = { background: 0, archived: 0 };
     const requested = filter?.workspaceIds ? new Set(filter.workspaceIds) : null;
     const live = this.deps.manager.listAgents();
     const liveIds = new Set(live.map((agent) => agent.id));
     const labels = Object.entries(filter?.labels ?? {});
     const visibility = filter?.includeBackground ?? false;
+    // Counting archived agents needs them read; the matches() check below still drops them.
+    const storageFilter = countExcluded ? { ...filter, includeArchived: true } : filter;
     const records = requested
-      ? await this.deps.storage.listByWorkspaces(requested, filter)
-      : await this.deps.storage.listActive(filter);
+      ? await this.deps.storage.listByWorkspaces(requested, storageFilter)
+      : await this.deps.storage.listActive(storageFilter);
     const selectedLive = requested
       ? live.filter((agent) => requested.has(agent.workspaceId ?? ""))
       : live;
@@ -129,30 +143,56 @@ export class AgentDirectory {
         if ((await this.deps.workspaces.get(id))?.background) backgroundWorkspaceIds.add(id);
       }
     }
-    const matches = (
-      agent: DiscoverableAgent & { archivedAt?: string | null; labels?: Record<string, string> },
-    ) =>
+    type Candidate = DiscoverableAgent & {
+      archivedAt?: string | null;
+      labels?: Record<string, string>;
+    };
+    const inBackgroundWorkspace = (agent: Candidate) =>
+      agent.workspaceId !== undefined && backgroundWorkspaceIds.has(agent.workspaceId);
+    // The first reason an agent is dropped is the one counted: background, then archived.
+    const exclusion = (agent: Candidate): "background" | "archived" | null => {
+      if (!admits(agent, inBackgroundWorkspace(agent), visibility)) {
+        return agent.internal ? null : "background";
+      }
+      return !filter?.includeArchived && agent.archivedAt ? "archived" : null;
+    };
+    const matches = (agent: Candidate) =>
       (filter?.includeArchived || !agent.archivedAt) &&
-      admits(
-        agent,
-        agent.workspaceId !== undefined && backgroundWorkspaceIds.has(agent.workspaceId),
-        visibility,
-      ) &&
+      admits(agent, inBackgroundWorkspace(agent), visibility) &&
       labels.every(([key, value]) => agent.labels?.[key] === value);
+    // Counts each agent once: only the first pass over the raw records and live agents.
+    const matchesAndCount = (agent: Candidate) => {
+      if (countExcluded) {
+        const reason = exclusion(agent);
+        if (reason) excluded[reason] += 1;
+      }
+      return matches(agent);
+    };
     const stored = records
-      .filter((record) => !liveIds.has(record.id) && matches(record))
+      .filter((record) => !liveIds.has(record.id) && matchesAndCount(record))
       .filter(
         (record) =>
           filter?.includeUnavailablePersisted || this.deps.isStoredProviderAvailable(record),
       )
       .map((record) => this.deps.projectStored(record));
     const active = await Promise.all(
-      selectedLive.filter(matches).map((agent) => this.deps.projectLive(agent)),
+      selectedLive.filter(matchesAndCount).map((agent) => this.deps.projectLive(agent)),
     );
-    return [...active, ...stored]
+    const agents = [...active, ...stored]
       .filter(matches)
       .filter((agent) => this.deps.isProviderVisible(agent.provider));
+    return { agents, excluded };
   }
+}
+
+export interface AgentDirectoryFilter {
+  workspaceIds?: Iterable<string>;
+  /** Include parent chains by ID for workspace root classification. */
+  includeAncestors?: boolean;
+  labels?: Record<string, string>;
+  includeArchived?: boolean;
+  includeBackground?: BackgroundVisibility;
+  includeUnavailablePersisted?: boolean;
 }
 
 function admits(

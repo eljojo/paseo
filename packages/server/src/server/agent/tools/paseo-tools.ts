@@ -32,7 +32,7 @@ import {
 } from "../../messages.js";
 import {
   buildStoredAgentPayload,
-  selectAgentListItems,
+  selectAgentListItemsWithCounts,
   toAgentPayload,
 } from "../agent-projections.js";
 import { summarizeAgentActivity } from "../activity-curator.js";
@@ -2281,11 +2281,15 @@ function createToolCatalog(
     "list_agents",
     {
       title: "List agents",
-      description: "List recent agents as compact metadata.",
+      description:
+        "List agents on this host as compact metadata. With no arguments it lists every unarchived agent on the host, background agents (those started by another agent) included, and filters only when asked. leftOut says how many agents the answer did not include, and why.",
       inputSchema: {
-        includeBackground: z.boolean().optional().default(false),
+        includeBackground: z.boolean().optional().default(true),
         includeArchived: z.boolean().optional().default(false),
-        cwd: z.string().optional(),
+        cwd: z
+          .string()
+          .optional()
+          .describe("Only agents in this directory or below. Omit for the whole host."),
         sinceHours: z
           .number()
           .int()
@@ -2298,18 +2302,25 @@ function createToolCatalog(
       },
       outputSchema: {
         agents: z.array(AgentListItemPayloadSchema),
+        leftOut: z.object({
+          background: z.number().int(),
+          archived: z.number().int(),
+          otherCwd: z.number().int(),
+          status: z.number().int(),
+          archivedBeforeWindow: z.number().int(),
+          overLimit: z.number().int(),
+        }),
       },
     },
     async ({
-      includeBackground = false,
+      includeBackground = true,
       includeArchived = false,
       cwd,
       sinceHours = 48,
       statuses,
       limit = 50,
     }) => {
-      const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
-      const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
+      const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : undefined;
       if (!options.workspaceRegistry) throw new Error("Workspace registry is not configured");
       const directory = new AgentDirectory({
         manager: agentManager,
@@ -2329,14 +2340,20 @@ function createToolCatalog(
             new Set(providerSnapshotManager.listRegisteredProviderIds()),
           ),
       });
-      const agents = selectAgentListItems(
-        await directory.list({ includeBackground, includeArchived }),
-        { cwd: requestedCwd, statuses, sinceHours, limit },
-      );
+      const { agents: snapshots, excluded } = await directory.listWithExclusions({
+        includeBackground,
+        includeArchived,
+      });
+      const { items: agents, leftOut } = selectAgentListItemsWithCounts(snapshots, {
+        cwd: requestedCwd,
+        statuses,
+        sinceHours,
+        limit,
+      });
 
       return {
         content: [],
-        structuredContent: ensureValidJson({ agents }),
+        structuredContent: ensureValidJson({ agents, leftOut: { ...excluded, ...leftOut } }),
       };
     },
   );

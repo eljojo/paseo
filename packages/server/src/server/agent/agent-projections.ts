@@ -342,24 +342,57 @@ function compareAgentListItems(a: AgentListItemPayload, b: AgentListItemPayload)
   return resolveAgentListActivityTime(b) - resolveAgentListActivityTime(a);
 }
 
-export function selectAgentListItems(
+export interface AgentListSelectionOptions {
+  cwd?: string;
+  statuses?: AgentSnapshotPayload["status"][];
+  sinceHours?: number;
+  limit?: number;
+}
+
+export interface AgentListLeftOut {
+  otherCwd: number;
+  status: number;
+  archivedBeforeWindow: number;
+  overLimit: number;
+}
+
+// Each agent that is not listed is counted once, under the first filter that dropped it:
+// cwd, status, the archive time window, then the limit.
+export function selectAgentListItemsWithCounts(
   agents: readonly AgentSnapshotPayload[],
-  options: {
-    cwd?: string;
-    statuses?: AgentSnapshotPayload["status"][];
-    sinceHours?: number;
-    limit?: number;
-  } = {},
-): AgentListItemPayload[] {
+  options: AgentListSelectionOptions = {},
+): { items: AgentListItemPayload[]; leftOut: AgentListLeftOut } {
   const statusFilter = options.statuses?.length ? new Set(options.statuses) : null;
   const sinceMs = Date.now() - (options.sinceHours ?? 48) * 60 * 60 * 1000;
-  return agents
-    .map(toAgentListItemPayload)
-    .filter((agent) => !options.cwd || isSameOrDescendantPath(options.cwd, agent.cwd))
-    .filter((agent) => !statusFilter || statusFilter.has(agent.status))
-    .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
-    .sort(compareAgentListItems)
-    .slice(0, options.limit ?? 50);
+  const leftOut: AgentListLeftOut = {
+    otherCwd: 0,
+    status: 0,
+    archivedBeforeWindow: 0,
+    overLimit: 0,
+  };
+  const kept: AgentListItemPayload[] = [];
+  for (const agent of agents.map(toAgentListItemPayload)) {
+    if (options.cwd && !isSameOrDescendantPath(options.cwd, agent.cwd)) {
+      leftOut.otherCwd += 1;
+    } else if (statusFilter && !statusFilter.has(agent.status)) {
+      leftOut.status += 1;
+    } else if (agent.archivedAt && resolveAgentListActivityTime(agent) < sinceMs) {
+      leftOut.archivedBeforeWindow += 1;
+    } else {
+      kept.push(agent);
+    }
+  }
+  kept.sort(compareAgentListItems);
+  const limit = options.limit ?? 50;
+  leftOut.overLimit = Math.max(0, kept.length - limit);
+  return { items: kept.slice(0, limit), leftOut };
+}
+
+export function selectAgentListItems(
+  agents: readonly AgentSnapshotPayload[],
+  options: AgentListSelectionOptions = {},
+): AgentListItemPayload[] {
+  return selectAgentListItemsWithCounts(agents, options).items;
 }
 
 export function toRecentProviderSessionDescriptorPayload(

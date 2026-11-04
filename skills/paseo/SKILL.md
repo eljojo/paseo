@@ -17,7 +17,7 @@ Keep an agent's `{ serverId, agentId }` together. For example, call `send_agent_
 { "serverId": "srv_build", "agentId": "agent_123", "prompt": "Continue", "notifyOnFinish": true }
 ```
 
-Remote paths and workspace IDs belong to the destination. Remote `list_agents` has no caller-directory default; pass `cwd` to filter it.
+Remote paths and workspace IDs belong to the destination.
 
 Manage registrations through the CLI; use the returned `registrationId` for updates and removal:
 
@@ -88,7 +88,7 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
-**`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`; set `includeBackground: true` to include agents in background workspaces.
+**`list_agents`** — lists every unarchived agent on the host, background ones included, and filters only when asked: `cwd`, `statuses`, `sinceHours`, `includeArchived`, `includeBackground: false`. `leftOut` counts the agents the answer did not include, by reason.
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 

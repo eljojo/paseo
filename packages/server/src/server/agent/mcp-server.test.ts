@@ -1048,6 +1048,14 @@ describe("browser MCP tools", () => {
       expect(listAgentsResult.isError).not.toBe(true);
       expect(listAgentsResult.structuredContent).toEqual({
         agents: [],
+        leftOut: {
+          background: 0,
+          archived: 0,
+          otherCwd: 0,
+          status: 0,
+          archivedBeforeWindow: 0,
+          overLimit: 0,
+        },
       });
       expectSingleTextContent(browserResult);
       expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
@@ -7225,7 +7233,7 @@ describe("agent snapshot MCP serialization", () => {
     });
   });
 
-  it("defaults list_agents to caller cwd and excludes archived agents", async () => {
+  it("defaults list_agents to the whole host, not the caller's cwd, and excludes archived agents", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const now = new Date().toISOString();
     spies.agentManager.getAgent.mockReturnValue(
@@ -7265,8 +7273,87 @@ describe("agent snapshot MCP serialization", () => {
     const response = await tool.handler({});
 
     const agentIds = agentsOf(response).map((agent) => agent.id);
-    expect(agentIds).toHaveLength(3);
-    expect(new Set(agentIds)).toEqual(new Set(["in-cwd", "in-child-cwd", "stored-in-cwd"]));
+    expect(agentIds).toHaveLength(4);
+    expect(new Set(agentIds)).toEqual(
+      new Set(["in-cwd", "in-child-cwd", "other-cwd", "stored-in-cwd"]),
+    );
+    expect(response.structuredContent.leftOut).toEqual({
+      background: 0,
+      archived: 1,
+      otherCwd: 0,
+      status: 0,
+      archivedBeforeWindow: 0,
+      overLimit: 0,
+    });
+  });
+
+  it("list_agents lists background agents by default and counts what it left out, by reason", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const now = Date.now();
+    const recent = new Date(now - 60 * 60 * 1000).toISOString();
+    const old = new Date(now - 72 * 60 * 60 * 1000).toISOString();
+    const backgroundWorkspace = createPersistedWorkspaceRecord({
+      workspaceId: "ws-background",
+      projectId: "project-1",
+      cwd: resolvePath("/tmp/background"),
+      kind: "directory",
+      displayName: "line",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+      background: true,
+    });
+    spies.agentManager.listAgents.mockReturnValue([
+      createManagedAgent({
+        id: "line",
+        cwd: backgroundWorkspace.cwd,
+        workspaceId: "ws-background",
+      }),
+      createManagedAgent({ id: "here-idle", cwd: TARGET_CWD, lifecycle: "idle" }),
+      createManagedAgent({ id: "here-running", cwd: TARGET_CWD, lifecycle: "running" }),
+      createManagedAgent({ id: "elsewhere", cwd: resolvePath("/tmp/elsewhere") }),
+    ]);
+    spies.agentStorage.listActive.mockResolvedValue([
+      createStoredRecord({ id: "archived-recent", cwd: TARGET_CWD, archivedAt: recent }),
+      createStoredRecord({ id: "archived-old", cwd: TARGET_CWD, archivedAt: old }),
+    ]);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      logger,
+      providerSnapshotManager: createClaudeOnlyManager(),
+      workspaceRegistry: {
+        get: async () => backgroundWorkspace,
+        list: async () => [backgroundWorkspace],
+        upsert: async () => undefined,
+      },
+    });
+    const tool = registeredTool(server, "list_agents");
+
+    // No arguments: the background line is listed; only the archive is left out.
+    const everything = await tool.handler({});
+    expect(agentsOf(everything).map((agent) => agent.id)).toEqual(
+      expect.arrayContaining(["line", "here-idle", "here-running", "elsewhere"]),
+    );
+    expect(everything.structuredContent.leftOut).toMatchObject({ background: 0, archived: 2 });
+
+    // Each filter the caller applies is counted under its own reason, once per agent.
+    const filtered = await tool.handler({
+      includeBackground: false,
+      includeArchived: true,
+      cwd: TARGET_CWD,
+      statuses: ["running", "closed"],
+      limit: 1,
+    });
+    expect(agentsOf(filtered).map((agent) => agent.id)).toEqual(["here-running"]);
+    expect(filtered.structuredContent.leftOut).toEqual({
+      background: 1,
+      archived: 0,
+      otherCwd: 1,
+      status: 1,
+      archivedBeforeWindow: 1,
+      overLimit: 1,
+    });
   });
 
   it("allows explicit cwd, status, archive, time, and limit filters for list_agents", async () => {
