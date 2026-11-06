@@ -3726,6 +3726,93 @@ class HeldTurnAgentClient implements AgentClient {
   }
 }
 
+// A role session is replaced by a successor it starts; the successor's boot
+// archives it. Started without detached, the successor is its child, and the
+// archive cascade took it down too (EMs lost 2026-10-26 and 2026-11-05).
+describe("archive_agent MCP tool", () => {
+  const logger = createTestLogger();
+  const existingCwd = process.cwd();
+
+  async function parentWithChild(workdir: string) {
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const agentManager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger,
+    });
+    const parent = await agentManager.createAgent(
+      { provider: "codex", cwd: existingCwd },
+      undefined,
+      { workspaceId: "wks_parent" },
+    );
+    const parentServer = await createAgentMcpServer({
+      agentManager,
+      agentStorage: storage,
+      callerAgentId: parent.id,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const created = await registeredTool(parentServer, "create_agent").handler({
+      title: "Successor",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Take over",
+    });
+    const childId = z.object({ agentId: z.string() }).parse(created.structuredContent).agentId;
+    expect((await storage.get(childId))?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+    return { storage, agentManager, parent, childId };
+  }
+
+  it("leaves the caller running when it archives its own parent", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-archive-own-parent-"));
+    const { storage, agentManager, parent, childId } = await parentWithChild(workdir);
+    try {
+      const childServer = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: childId,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      await registeredTool(childServer, "archive_agent").handler({ agentId: parent.id });
+      await agentManager.flush();
+
+      expect((await storage.get(parent.id))?.archivedAt).toBeTruthy();
+      const child = await storage.get(childId);
+      expect(child?.archivedAt ?? null).toBeNull();
+      expect(child?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("still archives a parent's children when someone else archives the parent", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-archive-cascade-"));
+    const { storage, agentManager, parent, childId } = await parentWithChild(workdir);
+    try {
+      const outsider = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const outsiderServer = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: outsider.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+
+      await registeredTool(outsiderServer, "archive_agent").handler({ agentId: parent.id });
+      await agentManager.flush();
+
+      expect((await storage.get(childId))?.archivedAt).toBeTruthy();
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+});
+
 describe("send_agent_prompt MCP tool", () => {
   it.each([
     { agentScoped: true, behavior: undefined, available: true, steered: true },

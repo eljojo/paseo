@@ -1098,6 +1098,22 @@ function createToolCatalog(
 
   // Refuses agents that are unknown, internal, or archived; returns the live
   // labels when the agent is loaded, else the stored ones.
+  // Walks agentId's parent links upward; true when ancestorId is on the way.
+  async function isAncestorOf(ancestorId: string, agentId: string): Promise<boolean> {
+    const seen = new Set<string>();
+    let current: string | undefined = agentId;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const labels: Record<string, string> | undefined =
+        agentManager.getAgent(current)?.labels ?? (await agentStorage.get(current))?.labels;
+      current = labels ? (getParentAgentIdFromLabels(labels) ?? undefined) : undefined;
+      if (current === ancestorId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function requireActiveAgent(agentId: string) {
     const record = await agentStorage.get(agentId);
     const live = agentManager.getAgent(agentId);
@@ -2396,6 +2412,16 @@ function createToolCatalog(
       },
     },
     async ({ agentId }) => {
+      // Archiving cascades to the target's descendants. When the caller is one
+      // of them, as a successor archiving the predecessor that started it is,
+      // the caller is detached first so it never archives itself by accident.
+      if (
+        callerAgentId &&
+        callerAgentId !== agentId &&
+        (await isAncestorOf(agentId, callerAgentId))
+      ) {
+        await detachAgentCommand({ agentManager }, callerAgentId);
+      }
       await archiveAgentCommand(
         {
           agentManager,

@@ -251,7 +251,9 @@ Archiving runs through `AgentManager.archiveAgent` (`packages/server/src/server/
 4. Close the runtime (kills the process if still running)
 5. **Resolve children** — detach cross-workspace and open-tab children; cascade-archive the rest recursively
 
-Cascade is what keeps subagent fleets from outliving their orchestrator.
+Cascade is what keeps subagent fleets from outliving their orchestrator. It never takes down the
+agent that asked for the archive: when the MCP `archive_agent` caller is a descendant of the target,
+as a successor archiving the session that started it is, the caller is detached first.
 
 Workspace archive is a separate lifecycle. Archiving or removing a worktree can close a surviving
 agent record without setting the agent's `archivedAt`, while its `workspaceId` still points at the
