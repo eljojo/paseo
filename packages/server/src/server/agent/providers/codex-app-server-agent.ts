@@ -289,7 +289,12 @@ const CODEX_MODES: AgentMode[] = [
   },
 ];
 
-const DEFAULT_CODEX_MODE_ID = "auto";
+// An agent started with no mode runs in full access, and the mode is always
+// sent to Codex rather than left to its own config: the build's agents run
+// unattended, and a default that asks for approval stalls them on a prompt
+// nobody answers (three Codex lines on 2026-11-03, one on 2026-11-06). A mode
+// that asks is used only when it is asked for by name.
+const DEFAULT_CODEX_MODE_ID = "full-access";
 
 interface CodexAppServerClientLike {
   request(method: string, params?: unknown): Promise<unknown>;
@@ -3515,7 +3520,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly asyncQuestions: CodexAsyncQuestions;
   private readonly codexHome: string;
   private currentMode: string;
-  private hasWorkflowModeOverride: boolean;
   private readonly providerOptions: CodexProviderOptions;
   private resolvedWorkspaceWrite: NonNullable<
     CodexProviderOptions["sandbox_workspace_write"]
@@ -3659,7 +3663,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (config.modeId !== undefined) {
       validateCodexMode(config.modeId);
     }
-    this.hasWorkflowModeOverride = config.modeId !== undefined;
     this.currentMode = config.modeId ?? DEFAULT_CODEX_MODE_ID;
     this.providerOptions =
       validateProviderOptions("codex", CodexProviderOptionsSchema, config.providerOptions) ?? {};
@@ -4364,10 +4367,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     params: Record<string, unknown>,
     preset: CodexModePreset,
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
-    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
-    const sandboxPolicyType =
-      this.providerOptions.sandbox_mode ??
-      (this.hasWorkflowModeOverride ? preset.sandbox : undefined);
+    const approvalPolicy = preset.approvalPolicy;
+    const sandboxPolicyType = this.providerOptions.sandbox_mode ?? preset.sandbox;
     if (approvalPolicy && this.providerOptions.approval_policy === undefined) {
       params.approvalPolicy = approvalPolicy;
     }
@@ -4382,9 +4383,7 @@ export class CodexAppServerAgentSession implements AgentSession {
           ? this.resolvedSandboxPolicy
           : toSandboxPolicy(sandboxPolicyType, workspaceWrite);
     }
-    if (this.hasWorkflowModeOverride) {
-      params.approvalsReviewer = preset.approvalsReviewer;
-    }
+    params.approvalsReviewer = preset.approvalsReviewer;
     return { approvalPolicy, sandboxPolicyType };
   }
 
@@ -4742,7 +4741,6 @@ export class CodexAppServerAgentSession implements AgentSession {
   async setMode(modeId: string): Promise<void | AgentProviderNotice> {
     validateCodexMode(modeId);
     this.currentMode = modeId;
-    this.hasWorkflowModeOverride = true;
     this.config.modeId = modeId;
     this.cachedRuntimeInfo = null;
     if (this.activeForegroundTurnId) {
@@ -5638,8 +5636,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     sandbox?: string;
   } {
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
-    const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
-    const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
+    const approvalPolicy = preset.approvalPolicy;
+    const sandbox = preset.sandbox;
     const innerConfig = this.buildCodexInnerConfig();
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
@@ -5655,10 +5653,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(developerInstructions ? { developerInstructions } : {}),
       ...(innerConfig ? { config: innerConfig } : {}),
       ...(this.ephemeral ? { ephemeral: true } : {}),
+      approvalsReviewer: preset.approvalsReviewer,
     };
-    if (this.hasWorkflowModeOverride) {
-      params.approvalsReviewer = preset.approvalsReviewer;
-    }
     return { params, approvalPolicy, sandbox };
   }
 
@@ -7791,17 +7787,15 @@ export class CodexAppServerAgentClient implements AgentClient {
     ]);
     return {
       models,
-      defaultModeId: autoReviewEnabled ? "auto-review" : DEFAULT_CODEX_MODE_ID,
+      defaultModeId: DEFAULT_CODEX_MODE_ID,
       modes: autoReviewEnabled
         ? CODEX_MODES
         : CODEX_MODES.filter((mode) => mode.id !== "auto-review"),
     };
   }
 
-  async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {
-    return (await this.resolveAutoReviewEnabled(input.signal))
-      ? "auto-review"
-      : DEFAULT_CODEX_MODE_ID;
+  async resolveDefaultModeId(_input: ResolveAgentDefaultModeInput): Promise<string> {
+    return DEFAULT_CODEX_MODE_ID;
   }
 
   private async fetchModelsFromAppServer(

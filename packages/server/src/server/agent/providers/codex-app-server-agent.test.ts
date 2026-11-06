@@ -1085,6 +1085,46 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  // A build agent started with no mode must never wait on an approval nobody
+  // is there to give (three Codex lines stalled on 2026-11-03, one on
+  // 2026-11-06). Only a mode asked for by name asks for approval.
+  test("a session started with no mode runs Codex in full access", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({ modeId: undefined, thinkingOptionId: "medium" });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "default-mode-thread" } };
+        }
+        if (method === "turn/start") {
+          return {};
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.startTurn("trigger thread creation");
+
+    const startCall = requests.find((req) => req.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+    });
+  });
+
+  test("the provider's default mode is full access, with or without auto-review", async () => {
+    for (const autoReviewEnabled of [true, false]) {
+      const client = new CodexAppServerAgentClient(createTestLogger());
+      castInternals<{ autoReviewEnabledPromise: Promise<boolean> | null }>(
+        client,
+      ).autoReviewEnabledPromise = Promise.resolve(autoReviewEnabled);
+      await expect(client.resolveDefaultModeId({})).resolves.toBe("full-access");
+    }
+  });
+
   test("Default Permissions pins the user as approvals reviewer on thread/start", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession(
@@ -1248,7 +1288,7 @@ describe("Codex app-server provider", () => {
     );
   });
 
-  test("omitted mode preserves Codex resolved approval and sandbox config", async () => {
+  test("omitted mode sends full access on turn/start of a resumed thread", async () => {
     const session = createSession({ modeId: undefined });
     const request = vi.fn(async (method: string) => {
       if (method === "thread/loaded/list") return { data: ["test-thread"] };
@@ -1258,12 +1298,13 @@ describe("Codex app-server provider", () => {
     session.activeForegroundTurnId = null;
     session.client = createStub<CodexClientLike>({ request });
 
-    await session.startTurn("inherit config");
+    await session.startTurn("no mode given");
 
     const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
-    expect(turnStart).not.toHaveProperty("approvalPolicy");
-    expect(turnStart).not.toHaveProperty("sandboxPolicy");
-    expect(turnStart).not.toHaveProperty("approvalsReviewer");
+    expect(turnStart).toMatchObject({
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "dangerFullAccess" },
+    });
   });
 
   test("carries the complete native workspace-write policy including writable roots", async () => {
