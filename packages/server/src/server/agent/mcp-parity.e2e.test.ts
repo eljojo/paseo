@@ -1065,7 +1065,7 @@ describe("Suite C: Schedule Tools", () => {
     }
   });
 
-  test("create_heartbeat without callerAgentId throws", async () => {
+  test("create_heartbeat without callerAgentId or agentId throws", async () => {
     await expectToolError(
       topLevelClient,
       "create_heartbeat",
@@ -1073,7 +1073,7 @@ describe("Suite C: Schedule Tools", () => {
         prompt: "say hello",
         cron: "*/5 * * * *",
       },
-      /requires an agent-scoped session/i,
+      /pass agentId/i,
     );
   });
 });

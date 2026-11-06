@@ -1089,10 +1089,9 @@ function createToolCatalog(
   // Every agent on a daemon is run by the same operator, so an agent-scoped
   // caller may manage any heartbeat by id — not only the ones aimed at itself.
   // A supervisor needs this to clean up (or fence) a dead session's wake.
+  // A top-level session may too: a supervisor on another daemon reaches this
+  // one as a top-level MCP session, behind the same daemon password.
   async function requireHeartbeat(id: string) {
-    if (!callerAgentId) {
-      throw new PaseoToolInputError("Heartbeat operations require an agent-scoped session");
-    }
     return requireScheduleTarget(id, "agent");
   }
 
@@ -3005,7 +3004,7 @@ function createToolCatalog(
     {
       title: "Create heartbeat",
       description:
-        "Create a recurring heartbeat that sends a prompt into an agent on a cron cadence. By default the prompt comes back to you; pass agentId to arm it on another active (existing, non-archived) agent instead, for example one you supervise. Reusing the name of an existing heartbeat on the same target replaces that heartbeat in place and returns the same id — do not delete the old id afterwards, it is the new heartbeat. The same name on a different target is a separate heartbeat.",
+        "Create a recurring heartbeat that sends a prompt into an agent on a cron cadence. By default the prompt comes back to you; pass agentId to arm it on another active (existing, non-archived) agent instead, for example one you supervise. From a session that is not an agent on this daemon (a supervisor on another daemon), agentId is required. Reusing the name of an existing heartbeat on the same target replaces that heartbeat in place and returns the same id — do not delete the old id afterwards, it is the new heartbeat. The same name on a different target is a separate heartbeat.",
       inputSchema: z
         .object({
           prompt: z.string().trim().min(1, "prompt is required"),
@@ -3036,11 +3035,17 @@ function createToolCatalog(
       if (!scheduleService) {
         throw new Error("Schedule service is not configured");
       }
-      if (!callerAgentId) {
-        throw new PaseoToolInputError("create_heartbeat requires an agent-scoped session");
-      }
-      resolveCallerAgent();
+      // A top-level session (a supervisor on another daemon) names the agent;
+      // an agent-scoped one defaults to itself.
       const targetAgentId = agentId ?? callerAgentId;
+      if (!targetAgentId) {
+        throw new PaseoToolInputError(
+          "create_heartbeat outside an agent-scoped session must pass agentId: there is no caller to arm it on",
+        );
+      }
+      if (callerAgentId) {
+        resolveCallerAgent();
+      }
       if (targetAgentId !== callerAgentId) {
         await requireActiveAgent(targetAgentId);
       }
@@ -3058,7 +3063,7 @@ function createToolCatalog(
         ...(maxRuns === undefined ? {} : { maxRuns }),
         ...(expiresAt === undefined ? {} : { expiresAt }),
         ...(runTimeoutMs === undefined ? {} : { runTimeoutMs }),
-        createdByAgentId: callerAgentId,
+        ...(callerAgentId ? { createdByAgentId: callerAgentId } : {}),
       });
 
       return {

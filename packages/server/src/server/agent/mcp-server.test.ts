@@ -5637,7 +5637,7 @@ describe("create_heartbeat MCP tool", () => {
     expect(createOrReplace).not.toHaveBeenCalled();
   });
 
-  it("requires an agent-scoped session", async () => {
+  it("outside an agent-scoped session it needs agentId, since there is no you to default to", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn();
     const server = await createAgentMcpServer({
@@ -5654,7 +5654,7 @@ describe("create_heartbeat MCP tool", () => {
         prompt: "check status",
         cron: "*/15 * * * *",
       }),
-    ).rejects.toThrow("create_heartbeat requires an agent-scoped session");
+    ).rejects.toThrow("pass agentId");
 
     expect(createOrReplace).not.toHaveBeenCalled();
   });
@@ -5712,6 +5712,33 @@ describe("create_heartbeat MCP tool", () => {
       expect.objectContaining({ target: { type: "agent", agentId: WORKER_ID }, name: "wake" }),
     );
     expect(result.structuredContent.target).toEqual({ type: "agent", agentId: WORKER_ID });
+  });
+
+  // A supervisor on another daemon reaches this one as a top-level MCP session,
+  // not as one of its agents (the EM on lisa arming a Codex line, 2026-10-28).
+  it("arms a heartbeat from a top-level session on the agent it names", async () => {
+    const { agentManager, agentStorage } = supervisorDeps({ [WORKER_ID]: {} });
+    const createOrReplace = vi.fn(async (input: CreateScheduleInput) =>
+      createStoredSchedule(input),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { createOrReplace } as unknown as ScheduleService,
+      logger,
+    });
+
+    await invokeToolWithParsedInput(registeredTool(server, "create_heartbeat"), {
+      prompt: "check on the worker",
+      cron: "*/15 * * * *",
+      agentId: WORKER_ID,
+    });
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { type: "agent", agentId: WORKER_ID } }),
+    );
+    expect(createOrReplace.mock.calls[0]?.[0].createdByAgentId).toBeUndefined();
   });
 
   it("records the caller as the creator, whether it arms another agent or itself", async () => {
@@ -5903,6 +5930,30 @@ describe("heartbeat ownership MCP tools", () => {
     expect(deleteSchedule).toHaveBeenCalledWith(foreignHeartbeat.id);
   });
 
+  it("deletes a heartbeat by id from a top-level session", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const heartbeat = createStoredSchedule({
+      prompt: "wake",
+      cadence: { type: "cron", expression: "0 * * * *" },
+      target: { type: "agent", agentId: "worker-agent" },
+    });
+    const deleteSchedule = vi.fn(async () => undefined);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: {
+        inspect: vi.fn(async () => heartbeat),
+        delete: deleteSchedule,
+      } as unknown as ScheduleService,
+      logger,
+    });
+
+    await registeredTool(server, "delete_heartbeat").handler({ id: heartbeat.id });
+
+    expect(deleteSchedule).toHaveBeenCalledWith(heartbeat.id);
+  });
+
   it("refuses to delete a new-agent schedule through delete_heartbeat", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const schedule = createStoredSchedule({
@@ -5926,23 +5977,6 @@ describe("heartbeat ownership MCP tools", () => {
     await expect(
       registeredTool(server, "delete_heartbeat").handler({ id: schedule.id }),
     ).rejects.toThrow(`Heartbeat not found: ${schedule.id}`);
-    expect(deleteSchedule).not.toHaveBeenCalled();
-  });
-
-  it("requires an agent-scoped session to delete a heartbeat", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const deleteSchedule = vi.fn();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      scheduleService: { inspect: vi.fn(), delete: deleteSchedule } as unknown as ScheduleService,
-      logger,
-    });
-
-    await expect(
-      registeredTool(server, "delete_heartbeat").handler({ id: "hb-1" }),
-    ).rejects.toThrow("Heartbeat operations require an agent-scoped session");
     expect(deleteSchedule).not.toHaveBeenCalled();
   });
 });
